@@ -11,11 +11,12 @@ python app.py                        # http://127.0.0.1:8000 (Bengaluru, dispatc
 ```
 
 Google sign-in, admins, the CARTO map key and other settings go in `.env`; see [DEMO.md](DEMO.md) §1.
+**MongoDB storage, SMTP email and notifications: [INTEGRATIONS.md](INTEGRATIONS.md). Free deployment (Render + Atlas + Brevo): [DEPLOY.md](DEPLOY.md).** Every role gets an in-app 🔔 notification and an email at each moment that matters to them.
 Roles: food donors, drivers, shelters and admins each see only their part. Admins also get **How Relay thinks**, an animated walkthrough of the rules, the ML model and the RL agent (DEMO.md §5).
-**Running, testing each PS feature and presenting: [DEMO.md](DEMO.md)** (`python ps_check.py` against the running app gives 21 PASS/FAIL checks).
+**Running, testing each PS feature and presenting: [DEMO.md](DEMO.md)** (`python ps_check.py` against the running app gives 25 PASS/FAIL checks).
 **The ML/RL guide is in [GUIDE.md](GUIDE.md)**: the data audit, model results, how to run, retrain and tune.
 
-Delete `relay.db` to reset the live demo. It holds the event log, and state is rebuilt by replaying it.
+To reset the live demo, delete `relay.db`, or run `python store.py wipe` when using MongoDB. The database holds the event log, and state is rebuilt by replaying it.
 
 ## Files
 
@@ -25,7 +26,9 @@ Delete `relay.db` to reset the live demo. It holds the event log, and state is r
 | `planner.py` | `plan(state, now, cfg) -> events`. Relay stages 0–2, plus baselines B0 (broadcast) and B1 (412FR static tiered) |
 | `sim.py` | Discrete-event simulator with common random numbers. Synthetic Noida scenarios, plus `bengaluru` / `bengaluru_strict` built from relay_data. §11.2 metrics, paired comparison |
 | `intake.py` | Free text -> draft card. Regex parser always runs; Claude extraction is optional (3 s timeout, cross-checked, conservative merge) |
-| `app.py` | FastAPI + append-only SQLite event log. Re-plans on every change and every 60 s |
+| `app.py` | FastAPI + append-only event log. Re-plans on every change and every 60 s |
+| `store.py` | Persistence: SQLite (default) or MongoDB. In-memory state plus one ordered, retrying write-behind thread. CLI: `check`, `stats`, `migrate`, `wipe` |
+| `notify.py` | Who gets which notification; HTML and plain-text emails; SMTP sender with outbox and retries |
 | `ml.py` | Data audit and fixes, acceptance model, decision dataset, behaviour cloning, fitted Q iteration |
 | `models/` | Trained models and reports written by `ml.py` |
 | `static/` | Front end: `index.html` shell, `app.css` design system, `app.js` (sign-in, onboarding, role screens), `explainer.js` (How Relay thinks) |
@@ -53,7 +56,7 @@ The ablations are in the Simulation lab table. Swapping the p model for a consta
 - **Stage 3 insertion / OR-Tools PDPTW and B2.** Add them when multi-stop matters.
 - **OSRM.** Uses haversine × 1.35 instead.
 - **Real OSM layout.** The synthetic scenarios use a made-up city around Noida; the `bengaluru` scenarios use relay_data's coordinates.
-- **Telegram/WhatsApp.** A web chat box stands in.
+- **Telegram/WhatsApp/SMS.** In-app notifications and email stand in.
 - **WebSocket.** The UI polls every 3 s.
 - **Bootstrap CIs.** Uses a normal approximation.
 
@@ -61,5 +64,6 @@ The ablations are in the Simulation lab table. Swapping the p model for a consta
 
 - `RELAY_CO2E_PER_KG` shows CO2e only when set, and you should cite the factor's source.
 - `RELAY_LLM_MODEL` defaults to `claude-opus-5`. LLM intake needs `pip install anthropic` and credentials.
-- `RELAY_DB` sets the event-log path.
+- `RELAY_DB` sets the SQLite path. `MONGODB_URI` / `MONGODB_DB` switch storage to MongoDB.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_SECURITY` send real email; `RELAY_PUBLIC_URL` sets the links inside emails.
 - `RELAY_POLICY` sets the live dispatch policy (default `Relay-RL`; see GUIDE.md §6).

@@ -2,4 +2,10 @@
 relay.db
 relay.db-*
 __pycache__/
-relay_data/
+relay_data.zip
+# the live app needs only these 4 dataset files (28 MB); the rest are for ml.py training and too big for GitHub
+relay_data/*
+!relay_data/donations.csv
+!relay_data/offers.csv
+!relay_data/volunteers.csv
+!relay_data/recipients.csv

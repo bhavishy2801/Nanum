@@ -1,9 +1,16 @@
-fastapi
-uvicorn
+# Pinned to the versions the models in models/ were trained and tested with (joblib models need the same scikit-learn).
+fastapi==0.141.1
+uvicorn==0.52.4
+# MongoDB storage (optional: without MONGODB_URI the app uses a local SQLite file)
+pymongo==4.18.2
 # ML pipeline (ml.py) and the learned dispatch policies
-numpy
-pandas
-pyarrow
-scikit-learn
+numpy==2.5.3
+pandas==3.0.6
+pyarrow==25.0.1
+scikit-learn==1.9.1
+joblib==1.6.0
 # optional: LLM intake (falls back to the regex parser without it)
 # anthropic
+# optional, only for test_store_notify.py
+# mongomock
+# aiosmtpd

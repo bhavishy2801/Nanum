@@ -61,6 +61,7 @@ code, me = call("POST", "/api/auth/demo", {"role": "admin"}, who=ADMIN)
 if code != 200:
     sys.exit("demo sign-in is off: set RELAY_DEMO_LOGIN=1 in .env to run this check")
 call("POST", "/api/auth/demo", {"role": "donor"}, who=DONOR)
+call("PUT", "/api/me/prefs", {"email": True, "offers": True}, who=DONOR)
 check("Auth", "a restaurant account can't open the admin board", call("GET", "/api/state", who=DONOR)[0] == 403)
 check("Auth", "a restaurant account can't open a driver's screen", call("GET", "/api/volunteers/V0001", who=DONOR)[0] == 403)
 code, st = call("GET", "/api/state")
@@ -167,7 +168,18 @@ call("POST", "/api/donations", dict(lat=center[0], lon=center[1], category="bake
 code2, home = call("GET", "/api/donor/home", who=DONOR)
 check("Roles", "a restaurant's own post shows up in its tracker, without the handover code",
       code2 == 200 and bool(home["donations"]) and "code" not in home["donations"][0])
+# Notifications: every moment becomes an in-app note + an email (SMTP, or a preview in the admin Mailbox)
+code, notes = call("GET", "/api/notes", who=DONOR)
+check("Notify", "the restaurant is notified of its own post (in-app)",
+      code == 200 and any(n["kind"] == "posted" for n in notes["notes"]), f"{notes['unread']} unread")
+code, ob = call("GET", "/api/admin/outbox")
+mine = [m for m in ob["messages"] if m["to"] == "demo-kitchen@relay.demo"]
+check("Notify", "...and gets an email for it (sent, or a preview when SMTP is off)",
+      code == 200 and any(m["kind"] == "posted" for m in mine), f"email mode: {ob['email']['mode']}, storage: {ob['storage']['backend']}")
+call("POST", "/api/notes/read", {"ids": None}, who=DONOR)
+check("Notify", "notes can be marked read", call("GET", "/api/notes", who=DONOR)[1]["unread"] == 0)
+check("Notify", "only admins can open the mailbox", call("GET", "/api/admin/outbox", who=DONOR)[0] == 403)
 call("POST", "/api/admin/sim", {"running": was_running})
 print(f"\n{sum(results)}/{len(results)} checks passed")
-print("Not built (say so if asked): SMS/email/push notifications (offers are in-app), multi-stop routing.")
+print("Not built (say so if asked): SMS/push notifications (email + in-app only), multi-stop routing.")
 sys.exit(0 if all(results) else 1)

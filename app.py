@@ -1,10 +1,10 @@
-"""Relay API: FastAPI + append-only SQLite event log (state is a projection of the log) + Google sign-in.
+"""Relay API: FastAPI + append-only event log (state is a projection of the log) + Google sign-in + email.
 
     python app.py            # http://127.0.0.1:8000
 
 Roles: donor (restaurant / kiosk / food chain / caterer ...), volunteer (driver), shelter, admin (RELAY_ADMINS in .env).
 Everyone who isn't a signed-in person is simulated ("living city"), so each role can be demoed on its own.
-ponytail: no chat channel (in-app notifications only).
+Storage: SQLite (default) or MongoDB (MONGODB_URI), see store.py. Notifications: in-app + SMTP email, see notify.py.
 """
 import asyncio
 import csv
@@ -15,7 +15,6 @@ import math
 import os
 import random
 import secrets
-import sqlite3
 import time
 import urllib.parse
 import urllib.request
@@ -26,14 +25,16 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import core
 import intake
+import notify
 import planner
 import sim
+import store as storage_db
 from core import INF, KG_PER_MEAL, L_escalate, available, latest_pickup, pick_time, storage, why_not
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -49,7 +50,6 @@ CARTO_KEY = env("RELAY_CARTO_KEY", "")            # CARTO basemap key, served to
 GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID", "")    # OAuth 2.0 Web client ID from Google Cloud Console
 ADMINS = {e.strip().lower() for e in env("RELAY_ADMINS", "").split(",") if e.strip()}
 DEMO_LOGIN = env("RELAY_DEMO_LOGIN", "1") == "1"  # one-click demo accounts; set 0 for a real deployment
-DB = env("RELAY_DB", os.path.join(HERE, "relay.db"))
 CO2E_PER_KG = env("RELAY_CO2E_PER_KG")            # set with its source (ReFED [R9] or EPA [R10]); unset = not shown
 SESSION_DAYS = 7
 
@@ -62,13 +62,13 @@ if isinstance(CFG.get("p_model"), str):
     CFG["p_model"] = core.load_p_model(CFG["p_model"])
 EXPLAIN_MODEL = sim.POLICIES["Relay-RL"][1]["wave_model"]   # the Q-function the admin explainer shows
 
-db = sqlite3.connect(DB, check_same_thread=False)
-db.execute("pragma journal_mode=wal")
-db.execute("create table if not exists events (seq integer primary key autoincrement, t real, type text, payload text)")
-db.execute("""create table if not exists users (email text primary key, name text, picture text, role text,
-              entity text, org text, kind text, lat real, lon real, created real)""")
-db.execute("create table if not exists sessions (token_hash text primary key, email text, expires real)")
-db.commit()
+STORE = storage_db.Store(storage_db.backend_from_env(env))   # SQLite file, or MongoDB when MONGODB_URI is set
+MAILER = notify.Mailer(STORE, env)                             # SMTP_* in .env; without it emails are previews
+PUBLIC_URL = (env("RELAY_PUBLIC_URL", "") or env("RENDER_EXTERNAL_URL", "")      # links inside emails (Render sets the latter)
+              or f"http://localhost:{env('PORT', '8000')}")
+CAT = {"cooked": "Cooked food", "dairy": "Dairy", "bakery": "Bakery", "produce": "Fruit & veg", "packaged": "Packaged food",
+       "mixed": "Mixed food", "unknown": "Food"}
+RECENT = deque(maxlen=120)   # latest events, for the admin activity stream
 S = core.State()
 BASE = 0.0          # epoch seconds of day-0 midnight; live times are minutes since then
 WORLD = None        # the relay_data world: real volunteers' behaviour for the living-city simulation
@@ -82,18 +82,25 @@ def now():
 def emit(e):
     e.setdefault("t", now())
     core.apply(S, e)     # raises on a bad event, so nothing invalid reaches the log
-    db.execute("insert into events (t, type, payload) values (?, ?, ?)", (e["t"], e["type"], json.dumps(e)))
+    STORE.event(e)
+    if e["type"] != "OfferExpired":
+        RECENT.append(e)
+    try:
+        NOTIFY.on_event(e)
+    except Exception as ex:   # a notification problem must never block a rescue; shown on System
+        STATS["notify_error"] = f"{e['type']}: {type(ex).__name__}: {ex}"
 
 
 def boot():
     """Rebuild state by replaying the log; seed the Bengaluru city from relay_data on first run."""
     global BASE, WORLD
     WORLD = sim.DataWorld("bengaluru", 0)
-    rows = db.execute("select payload from events order by seq").fetchall()
-    if rows:
-        BASE = json.loads(rows[0][0])["base"]
-        for (p,) in rows:
-            core.apply(S, json.loads(p))
+    events, STORE.events = STORE.events, []   # replayed once; after that the log lives only in the database
+    if events:
+        BASE = events[0]["base"]
+        for e in events:
+            core.apply(S, e)
+        RECENT.extend(e for e in events[-400:] if e["type"] != "OfferExpired")
         return
     lt = time.localtime()
     BASE = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
@@ -102,7 +109,6 @@ def boot():
         if e["type"] == "VolunteerAdded":
             e = {**e, "v": {**e["v"], "start": 0, "end": INF}}   # everyone on shift for the live demo
         emit(dict(e))
-    db.commit()
 
 
 async def changed():
@@ -110,37 +116,50 @@ async def changed():
     t0 = time.perf_counter()
     for e in PLAN(S, now(), CFG):
         emit(e)
-    db.commit()
     STATS["plan_ms"].append((time.perf_counter() - t0) * 1000)
     STATS["last_plan"] = time.time()
 
 
 # ---------------------------------------------------------------- accounts
 
+USER_KEYS = ("email", "name", "picture", "role", "entity", "org", "kind", "lat", "lon", "created")
+PREFS = {"email": True, "offers": True}   # email me at each moment / also for every new driver offer
+
+
 def _user(email):
-    r = db.execute("select email, name, picture, role, entity, org, kind, lat, lon, created from users where email = ?",
-                   (email,)).fetchone()
-    return dict(zip(("email", "name", "picture", "role", "entity", "org", "kind", "lat", "lon", "created"), r)) if r else None
+    """A copy of the account. Change it only through _save_user, so memory and the database stay in step."""
+    u = STORE.users.get(email)
+    return {**dict.fromkeys(USER_KEYS), **u, "prefs": {**PREFS, **(u.get("prefs") or {})}} if u else None
+
+
+def _save_user(email, **fields):
+    u = {**(_user(email) or {"email": email, "created": time.time()}), **fields}
+    STORE.put_user(u)
+    return _user(email)
+
+
+def _welcome(email):
+    """Welcome note + email, once per account, as soon as it has a role."""
+    u = _user(email)
+    if u and u["role"] and not u.get("welcomed"):
+        NOTIFY.welcome(_save_user(email, welcomed=time.time()))
 
 
 def _upsert_user(email, name, picture):
-    u = _user(email)
-    if not u:
-        db.execute("insert into users (email, name, picture, created) values (?, ?, ?, ?)", (email, name, picture, time.time()))
-    else:
-        db.execute("update users set name = ?, picture = ? where email = ?", (name, picture, email))
-    if email in ADMINS:
-        db.execute("update users set role = 'admin' where email = ?", (email,))
-    db.commit()
-    return _user(email)
+    u = _save_user(email, name=name, picture=picture, last_seen=time.time(), **({"role": "admin"} if email in ADMINS else {}))
+    _welcome(email)
+    return u
+
+
+def _hash(tok):
+    return hashlib.sha256(tok.encode()).hexdigest()
 
 
 def _start_session(resp, request, email):
     tok = secrets.token_urlsafe(32)
-    db.execute("delete from sessions where expires < ?", (time.time(),))
-    db.execute("insert into sessions values (?, ?, ?)",
-               (hashlib.sha256(tok.encode()).hexdigest(), email, time.time() + SESSION_DAYS * 86400))
-    db.commit()
+    for h in [h for h, (_, x) in STORE.sessions.items() if x < time.time()]:
+        STORE.del_session(h)
+    STORE.put_session(_hash(tok), email, time.time() + SESSION_DAYS * 86400)
     resp.set_cookie("relay_session", tok, max_age=SESSION_DAYS * 86400, httponly=True, samesite="lax",
                     secure=request.url.scheme == "https", path="/")
 
@@ -149,8 +168,7 @@ def user_opt(request: Request):
     tok = request.cookies.get("relay_session")
     if not tok:
         return None
-    r = db.execute("select email, expires from sessions where token_hash = ?",
-                   (hashlib.sha256(tok.encode()).hexdigest(),)).fetchone()
+    r = STORE.sessions.get(_hash(tok))
     return _user(r[0]) if r and r[1] > time.time() else None
 
 
@@ -171,7 +189,7 @@ def owns(u, entity):
 
 
 def user_entities():
-    return {r[0] for r in db.execute("select entity from users where entity is not null")}
+    return {u["entity"] for u in STORE.users.values() if u.get("entity")}
 
 
 def _nearest_zone(loc):
@@ -289,6 +307,7 @@ async def ticker():
 @asynccontextmanager
 async def lifespan(_):
     boot()
+    print(f"Relay storage: {STORE.backend.name} ({STORE.backend.where}), email: {MAILER.status()['mode']}", flush=True)
     planner._model(EXPLAIN_MODEL)   # load scikit-learn + the RL model now, not on the first donor's post
     if CFG.get("wave_model"):
         planner._model(CFG["wave_model"])
@@ -296,6 +315,7 @@ async def lifespan(_):
     task = asyncio.create_task(ticker())
     yield
     task.cancel()
+    STORE.flush()   # write everything still queued before the process exits
 
 
 app = FastAPI(title="Relay", lifespan=lifespan)
@@ -348,8 +368,11 @@ def _clock(t):
     return time.strftime("%H:%M" if lt.tm_yday == time.localtime().tm_yday else "%a %H:%M", lt)
 
 
+NOTIFY = notify.Notifier(STORE, MAILER, S, lambda t: _clock(t), PUBLIC_URL, CAT, CFG)
+
+
 def _me(u):
-    out = {k: u[k] for k in ("email", "name", "picture", "role", "entity", "org", "kind", "lat", "lon")}
+    out = {k: u.get(k) for k in ("email", "name", "picture", "role", "entity", "org", "kind", "lat", "lon", "prefs")}
     if u["role"] == "volunteer" and u["entity"] in S.volunteers:
         out["entity_name"] = S.volunteers[u["entity"]].name
     if u["role"] == "shelter" and u["entity"] in S.recipients:
@@ -424,20 +447,19 @@ async def auth_demo(x: DemoIn, request: Request, response: Response):
     if not u["role"]:
         taken = user_entities()
         if x.role == "admin":
-            db.execute("update users set role = 'admin' where email = ?", (email,))
+            _save_user(email, role="admin")
         elif x.role == "donor":
-            db.execute("update users set role='donor', org=?, kind='restaurant', lat=?, lon=? where email=?",
-                       ("Hotel Saffron · Koramangala", 12.9352, 77.6245, email))
+            _save_user(email, role="donor", org="Hotel Saffron · Koramangala", kind="restaurant", lat=12.9352, lon=77.6245)
         elif x.role == "volunteer":   # the most reliable driver near the centre, so offers come quickly
             pm, c = CFG.get("p_model") or {"volunteer": {}}, S.backup
             vs = [v for v in S.volunteers.values() if v.id not in taken and core.km(v.loc, c) < 5 and v.cap_kg >= 20]
             v = max(vs, key=lambda v: pm["volunteer"].get(v.id, 0))
-            db.execute("update users set role='volunteer', entity=?, org=? where email=?", (v.id, v.name, email))
+            _save_user(email, role="volunteer", entity=v.id, org=v.name)
         else:                         # a shelter that can take cooked food tonight
             rs = [r for r in S.recipients.values() if r.id not in taken and not r.veg_only and r.mu <= 60]
             r = max(rs, key=lambda r: r.cap["hot"])
-            db.execute("update users set role='shelter', entity=?, org=? where email=?", (r.id, r.name, email))
-        db.commit()
+            _save_user(email, role="shelter", entity=r.id, org=r.name)
+        _welcome(email)
     _start_session(response, request, email)
     return _me(_user(email))
 
@@ -446,8 +468,7 @@ async def auth_demo(x: DemoIn, request: Request, response: Response):
 async def logout(request: Request, response: Response):
     tok = request.cookies.get("relay_session")
     if tok:
-        db.execute("delete from sessions where token_hash = ?", (hashlib.sha256(tok.encode()).hexdigest(),))
-        db.commit()
+        STORE.del_session(_hash(tok))
     response.delete_cookie("relay_session", path="/")
     return {"ok": True}
 
@@ -457,6 +478,103 @@ async def me(request: Request):
     """The signed-in person, or null (not an error) when nobody is signed in."""
     u = user_opt(request)
     return _me(u) if u else None
+
+
+# ---------------------------------------------------------------- notifications, email settings, receipts
+
+@app.get("/api/notes")
+async def notes(u=Depends(need())):
+    mine = STORE.notes.get(u["email"], [])
+    return {"unread": sum(not n["read"] for n in mine), "notes": mine[::-1][:40]}
+
+
+class ReadIn(BaseModel):
+    ids: list[str] | None = None   # None = mark everything read
+
+
+@app.post("/api/notes/read")
+async def notes_read(x: ReadIn, u=Depends(need())):
+    for n in list(STORE.notes.get(u["email"], [])):
+        if not n["read"] and (x.ids is None or n["id"] in x.ids):
+            STORE.put_note({**n, "read": True})
+    return {"ok": True}
+
+
+class PrefsIn(BaseModel):
+    email: bool
+    offers: bool = True
+
+
+@app.put("/api/me/prefs")
+async def set_prefs(x: PrefsIn, u=Depends(need())):
+    return _me(_save_user(u["email"], prefs=x.model_dump()))
+
+
+@app.post("/api/me/test-email")
+async def my_test_email(u=Depends(need())):
+    doc = NOTIFY.test(u)
+    return {"status": doc["status"], "to": doc["to"]}
+
+
+@app.get("/receipt/{did}", response_class=HTMLResponse)
+async def receipt(did: str, request: Request):
+    """A printable donation receipt (for the donor's records / CSR report). Owner or admin only."""
+    u = user_opt(request)
+    if not u:
+        return RedirectResponse("/")
+    d = _get(S.donations, did)
+    if u["role"] != "admin" and d.owner != u["email"]:
+        raise HTTPException(403, "that isn't yours")
+    if d.status != "delivered":
+        raise HTTPException(409, "a receipt is available once the food is delivered")
+    r = S.recipients[d.recipient]
+    rows = [("Receipt no.", notify.E(d.id.upper())), ("Donor", notify.E(d.donor)),
+            ("Food", notify.E(f"{d.kg:g} kg {CAT.get(d.category, d.category).lower()}, kept {d.holding}")),
+            ("Meals (approx.)", f"{d.meals:.0f}"), ("Posted", notify.E(_clock(d.posted))), ("Picked up", notify.E(_clock(d.t_pick or d.t_claim))),
+            ("Delivered", notify.E(_clock(d.t_drop))), ("Delivered to", "A confidential shelter" if r.confidential else notify.E(r.name)),
+            ("Safe to eat until", notify.E(_clock(d.safe_until))), ("Date", time.strftime("%d %b %Y", time.localtime(BASE + d.t_drop * 60)))]
+    if CO2E_PER_KG:
+        rows.append(("CO₂e avoided (est.)", f"{d.kg * float(CO2E_PER_KG):.1f} kg"))
+    body = ("<p>This confirms that the surplus food below was rescued through Relay and delivered safely, within its "
+            "food-safety window.</p>" + notify.facts(rows) +
+            '<p style="font-size:12px;color:#64748b">Meals use the 0.544 kg-per-meal convention. Generated by Relay.</p>'
+            '<p class="noprint"><a href="javascript:print()" style="color:#0f9d74;font-weight:700">Print or save as PDF</a> · '
+            '<a href="/#mine" style="color:#0f9d74">Back to Relay</a></p>')
+    page = notify.layout(f"Donation receipt · {d.id.upper()}", "Relay donation receipt", body)
+    return page.replace("</head>", "<style>@media print{.noprint{display:none}body{background:#fff!important}}</style></head>")
+
+
+# ---------------------------------------------------------------- admin: mailbox
+
+@app.get("/api/admin/outbox")
+async def outbox(u=Depends(need("admin")), kind: str | None = None):
+    with STORE.lock:
+        docs = sorted(STORE.outbox.values(), key=lambda d: -d["created"])
+    docs = [{k: d.get(k) for k in ("id", "created", "to", "subject", "kind", "status", "attempts", "error", "sent_at")}
+            for d in docs if not kind or d["kind"] == kind][:150]
+    return {"email": MAILER.status(), "storage": STORE.status(), "messages": docs}
+
+
+@app.get("/api/admin/outbox/{mid}")
+async def outbox_one(mid: str, u=Depends(need("admin"))):
+    with STORE.lock:
+        return dict(_get(STORE.outbox, mid))
+
+
+@app.post("/api/admin/outbox/{mid}/resend")
+async def outbox_resend(mid: str, u=Depends(need("admin"))):
+    _get(STORE.outbox, mid)
+    return {"status": MAILER.resend(mid)["status"]}
+
+
+class TestMailIn(BaseModel):
+    to: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=200)
+
+
+@app.post("/api/admin/email/test")
+async def admin_test_email(x: TestMailIn, u=Depends(need("admin"))):
+    doc = NOTIFY.test({**u, "email": x.to.strip()})
+    return {"id": doc["id"], "status": doc["status"], "to": doc["to"]}
 
 
 @app.get("/api/shelters/unclaimed")
@@ -487,14 +605,12 @@ async def onboard(x: OnboardIn, u=Depends(need())):
         raise HTTPException(409, "your account already has a role")
     loc = (x.lat, x.lon)
     if x.role == "donor":
-        db.execute("update users set role='donor', org=?, kind=?, lat=?, lon=? where email=?",
-                   (x.org, x.kind or "restaurant", x.lat, x.lon, u["email"]))
+        _save_user(u["email"], role="donor", org=x.org, kind=x.kind or "restaurant", lat=x.lat, lon=x.lon)
     elif x.role == "volunteer":
         vid = f"U{sum(1 for v in S.volunteers if v.startswith('U')) + 1:04d}"
         emit({"type": "VolunteerAdded", "v": dict(id=vid, name=x.org, loc=loc, home=loc, cap_kg=x.cap_kg or 20,
                                                   start=0, end=INF, zone=_nearest_zone(loc))})
-        db.execute("update users set role='volunteer', entity=?, org=?, kind=?, lat=?, lon=? where email=?",
-                   (vid, x.org, x.kind, x.lat, x.lon, u["email"]))
+        _save_user(u["email"], role="volunteer", entity=vid, org=x.org, kind=x.kind, lat=x.lat, lon=x.lon)
     else:
         if x.shelter_id:
             if x.shelter_id not in S.recipients or x.shelter_id in user_entities():
@@ -506,9 +622,8 @@ async def onboard(x: OnboardIn, u=Depends(need())):
                 id=rid, name=x.org, loc=loc, alpha=0, beta=INF, mu=x.serves_after,
                 cap={"hot": x.hot, "cold": x.cold, "ambient": x.ambient}, veg_only=x.veg_only,
                 confidential=x.confidential, need=(x.hot + x.ambient) / KG_PER_MEAL, zone=_nearest_zone(loc))})
-        db.execute("update users set role='shelter', entity=?, org=?, lat=?, lon=? where email=?",
-                   (rid, S.recipients[rid].name, x.lat, x.lon, u["email"]))
-    db.commit()
+        _save_user(u["email"], role="shelter", entity=rid, org=S.recipients[rid].name, lat=x.lat, lon=x.lon)
+    _welcome(u["email"])
     await changed()
     return _me(_user(u["email"]))
 
@@ -855,8 +970,14 @@ async def overview(u=Depends(need("admin"))):
     unsafe = [d.id for d in delivered if d.t_drop + S.recipients[d.recipient].mu > d.safe_until + 1e-6]
     lat = sorted(STATS["plan_ms"])
     p95 = lat[int(.95 * (len(lat) - 1))] if lat else 0
+    st, ms = STORE.status(), MAILER.status()
     health = [
-        {"name": "Database & event log", "ok": True, "detail": f"{db.execute('select count(*) from events').fetchone()[0]:,} events"},
+        {"name": f"Database ({st['backend']})", "ok": not st["error"], "warn": st["pending"] > 50,
+         "detail": st["error"] or f"{st['events']:,} events · {st['pending']} waiting to be written"},
+        {"name": "Email", "ok": not ms["last_error"], "warn": ms["mode"] == "preview",
+         "detail": ms["last_error"] or (f"{ms['mode'].upper()} {ms['host']}:{ms['port']} · {ms['counts'].get('sent', 0)} sent" if ms["mode"] != "preview"
+                                        else "preview only: set BREVO_API_KEY or SMTP_HOST to send real email")},
+        {"name": "Notifications", "ok": "notify_error" not in STATS, "detail": STATS.get("notify_error", "working")},
         {"name": "Dispatch policy", "ok": POLICY == env("RELAY_POLICY", "Relay-RL"), "detail": POLICY},
         {"name": "Acceptance model", "ok": bool(CFG.get("p_model")), "detail": "models/acceptance.json" if CFG.get("p_model") else "missing: run python ml.py all"},
         {"name": "Planner speed", "ok": p95 < 500, "detail": f"p95 {p95:.0f} ms · last run {time.time() - STATS['last_plan']:.0f} s ago"},
@@ -867,10 +988,9 @@ async def overview(u=Depends(need("admin"))):
         {"name": "Map tiles (CARTO)", "ok": bool(CARTO_KEY), "detail": "key set" if CARTO_KEY else "set RELAY_CARTO_KEY in .env"},
         {"name": "Demo accounts", "ok": not DEMO_LOGIN, "warn": DEMO_LOGIN, "detail": "ON: turn off (RELAY_DEMO_LOGIN=0) before a real launch" if DEMO_LOGIN else "off"},
     ]
-    users = [dict(zip(("email", "name", "picture", "role", "entity", "org", "created"), r))
-             for r in db.execute("select email, name, picture, role, entity, org, created from users order by created desc")]
-    rows = db.execute("select payload from events where type not in ('OfferExpired') order by seq desc limit 80").fetchall()
-    events = [_describe(json.loads(p)) for (p,) in rows]
+    users = sorted(({k: x.get(k) for k in ("email", "name", "picture", "role", "entity", "org", "created")} for x in STORE.users.values()),
+                   key=lambda x: -(x["created"] or 0))
+    events = [_describe(e) for e in list(RECENT)[::-1][:80]]
     counts = Counter(d.status for d in S.donations.values())
     return {"health": health, "users": users, "events": events, "sim": {**SIM, **SIM_COUNT, "due": len(_due)},
             "counts": counts, "uptime_min": (time.time() - STATS["booted"]) / 60, "now": _clock(t)}
@@ -900,8 +1020,9 @@ async def reset_user(email: str, u=Depends(need("admin"))):
     """Clear a person's role so they choose again on next sign-in (their driver/shelter stays in the city)."""
     if email.lower() in ADMINS or email == u["email"]:
         raise HTTPException(409, "admins are set in .env (RELAY_ADMINS)")
-    db.execute("update users set role = null, entity = null where email = ?", (email.lower(),))
-    db.commit()
+    if email.lower() not in STORE.users:
+        raise HTTPException(404, "no such person")
+    _save_user(email.lower(), role=None, entity=None, welcomed=None)
     return {"ok": True}
 
 
@@ -1026,4 +1147,5 @@ async def sim_compare(scenario: str = "bengaluru", seeds: int = Query(30, ge=2, 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=int(env("PORT", "8000")))
+    # HOST=0.0.0.0 in a container / cloud host. Behind a proxy, set FORWARDED_ALLOW_IPS=* so https is detected (secure cookies).
+    uvicorn.run(app, host=env("HOST", "127.0.0.1"), port=int(env("PORT", "8000")))

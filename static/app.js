@@ -327,7 +327,9 @@ function enterApp() {
   $("#tabs").querySelectorAll(".tab").forEach(t => t.remove());
   $("#tabs").insertAdjacentHTML("beforeend", ROUTES[me.role].map(([id, name, ic, isNew]) =>
     `<button class="tab" role="tab" data-act="tab" data-tab="${id}" id="t-${id}">${I(ICON[ic])}${name}${isNew ? ' <span class="new">NEW</span>' : ""}</button>`).join(""));
+  const wantSettings = location.hash === "#settings";
   go(location.hash.slice(1), false);
+  if (wantSettings) setTimeout(openSettings, 300);
   if (!APP.loop) { APP.loop = setInterval(tick, 3000); setInterval(clockTick, 1000); }
   clockTick();
 }
@@ -379,11 +381,80 @@ async function tick(force) {
     if (r === "shelter" || r === "received") await renderShelter();
     if (r === "impact") await renderImpact();
     if (r === "system") await renderSystem();
+    await pollNotes();
     if (!APP.online) toast("Reconnected");
     APP.online = true;
   } catch (e) {
     if (/fetch|network/i.test(e.message)) APP.online = false; else if (force) toast(e.message, "err");
   } finally { APP.busy = false; clockTick(); }
+}
+
+// ---------------------------------------------------------------- notifications (bell), email settings, confetti
+const NOTE_EM = {welcome: "👋", posted: "📦", offer: "📨", claimed: "🛵", job: "🛵", incoming: "🍲", picked_up: "🚚", on_the_way: "🚚",
+  delivered: "✅", thanks: "💚", received: "✅", lost: "⚠️", job_ended: "↩️", driver_changed: "↩️", escalation: "🚨"};
+const CELEBRATE = ["delivered", "thanks", "received"];
+const ago = ts => { const s = Date.now() / 1000 - ts; return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)} min ago` : s < 86400 ? `${Math.floor(s / 3600)} h ago` : new Date(ts * 1000).toLocaleDateString(); };
+async function pollNotes() {
+  const x = await api("/api/notes");
+  const fresh = APP.seen ? x.notes.filter(n => !n.read && !APP.seen.has(n.id)) : [];
+  APP.seen = new Set(x.notes.map(n => n.id));
+  APP.notes = x.notes;
+  const n = $("#bell-n");
+  n.hidden = !x.unread; n.textContent = x.unread > 9 ? "9+" : x.unread;
+  if (fresh.length) {
+    const b = $(".bell"); b.classList.remove("ring"); void b.offsetWidth; b.classList.add("ring");
+    for (const f of fresh.slice(0, 2).reverse()) toast(`${NOTE_EM[f.kind] || "🔔"} ${f.title}: ${f.body}`, "info");
+    if (fresh.some(f => CELEBRATE.includes(f.kind))) confetti();
+  }
+  if (!$("#notes").hidden) renderNotes();
+}
+function renderNotes() {
+  const ns = APP.notes || [];
+  setHTML($("#notes-list"), ns.length ? ns.map(n => `<button class="note ${n.read ? "" : "unread"}" data-act="note" data-id="${h(n.id)}" data-link="${h(n.link || "")}">
+      <span class="em">${NOTE_EM[n.kind] || "🔔"}</span><span class="grow" style="min-width:0"><b>${h(n.title)}</b><p>${h(n.body)}</p><time>${ago(n.created)}</time></span>${n.read ? "" : '<span class="dot"></span>'}</button>`).join("")
+    : '<div class="empty small" style="padding:26px 16px">Nothing yet. Updates about your rescues appear here, and in your email.</div>');
+}
+async function openNote(b) {
+  $("#notes").hidden = true;
+  api("/api/notes/read", {method: "POST", body: JSON.stringify({ids: [b.dataset.id]})}).then(pollNotes).catch(() => {});
+  const link = b.dataset.link;
+  if (link.startsWith("/receipt/")) return window.open(link, "_blank", "noopener");
+  if (link.startsWith("/#")) go(link.slice(2));
+}
+const PREF_TEXT = {
+  donor: ["When it's posted", "When a driver accepts, and roughly when they'll arrive", "When it's picked up", "When it's delivered, with a printable receipt", "If it couldn't be rescued in time"],
+  volunteer: ["Rescue offers that fit you (you can turn these off below)", "Confirmed rescues: pickup and drop-off addresses with map links", "A thank-you with the meals you delivered"],
+  shelter: ["Food coming to you, with the 4-digit handover code", "When the food is on its way", "Handover confirmed"],
+  admin: ["Rescues that need a human (real donors only, so the city simulation can't flood your inbox)"]};
+function openSettings() {
+  const me = APP.me, p = me.prefs || {email: true, offers: true}, demo = /\.demo$/i.test(me.email);
+  $("#settings-body").innerHTML = `<h2 id="set-title">Email &amp; notifications</h2>
+    <p class="small mute" style="margin-top:6px">In-app notifications (the bell) are always on. Email goes to <b>${h(me.email)}</b>.</p>
+    ${demo ? '<div class="xp-note" style="margin-top:12px">This is a demo account, so emails aren\'t actually sent. Admins can read them under System → Mailbox.</div>' : ""}
+    <label class="pref"><span class="switch"><input type="checkbox" id="pref-email" ${p.email ? "checked" : ""}></span><span><b>Email me at each important moment</b><span>What you'll get:</span><ul class="bul">${(PREF_TEXT[me.role] || []).map(t => `<li>${h(t)}</li>`).join("")}</ul></span></label>
+    ${me.role === "volunteer" ? `<label class="pref"><span class="switch"><input type="checkbox" id="pref-offers" ${p.offers ? "checked" : ""}></span><span><b>Also email every new rescue offer</b><span>Turn off if you'd rather only see offers in the app.</span></span></label>` : ""}
+    <div class="row between wrap" style="margin-top:18px;gap:10px"><button class="btn ghost" data-act="test-email">Send me a test email</button><button class="btn" data-act="save-prefs">Save</button></div>`;
+  $("#settings-dlg").showModal();
+}
+async function savePrefs(btn) {
+  await busy(btn, async () => {
+    APP.me = {...APP.me, ...await api("/api/me/prefs", {method: "PUT", body: JSON.stringify({email: $("#pref-email").checked, offers: $("#pref-offers") ? $("#pref-offers").checked : true})})};
+    $("#settings-dlg").close(); toast("Saved your email settings");
+  });
+}
+function confetti() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const box = document.createElement("div"), C = ["#0f9d74", "#0ea5e9", "#6366f1", "#f59e0b", "#10b981", "#ec4899"];
+  box.className = "confetti";
+  document.body.appendChild(box);
+  for (let i = 0; i < 90; i++) {
+    const p = document.createElement("i"), x = Math.random() * 100, drift = (Math.random() - .5) * 240, rot = Math.random() * 720 - 360;
+    p.style.left = x + "vw"; p.style.background = C[i % C.length];
+    box.appendChild(p);
+    p.animate([{transform: "translate(0,0) rotate(0)", opacity: 1}, {transform: `translate(${drift}px,${innerHeight + 40}px) rotate(${rot}deg)`, opacity: .9}],
+      {duration: 1800 + Math.random() * 1600, delay: Math.random() * 400, easing: "cubic-bezier(.2,.6,.4,1)", fill: "forwards"});
+  }
+  setTimeout(() => box.remove(), 4200);
 }
 
 // ---------------------------------------------------------------- admin: live board
@@ -497,7 +568,7 @@ function donationCard(d) {
   const r = failed ? (d.t_pick ? 3 : d.volunteer ? 2 : d.recipient ? 1 : 0) : {posted: d.recipient ? 1 : 0, offered: 1, claimed: 2, picked_up: 3, delivered: 4}[d.status];
   const cls = i => i < r || (i === r && (failed || d.status === "delivered")) ? "done" : failed && i === r + 1 ? "fail" : i === r ? "cur" : "";
   let msg;
-  if (d.status === "delivered") msg = `✅ Delivered to <b>${h(d.recipient_name)}</b> at ${clock(d.t_drop)} · ${kgf(d.kg)} kg · ~${Math.round(d.meals)} meals. Thank you!`;
+  if (d.status === "delivered") msg = `✅ Delivered to <b>${h(d.recipient_name)}</b> at ${clock(d.t_drop)} · ${kgf(d.kg)} kg · ~${Math.round(d.meals)} meals. Thank you! <a class="link" href="/receipt/${h(d.id)}" target="_blank" rel="noopener">🧾 Receipt</a>`;
   else if (failed) msg = `We couldn't rescue this one (${h(d.end_reason || d.status)}). Please dispose of it safely. We're sorry.`;
   else if (d.volunteer) msg = d.status === "picked_up" ? `<b>${h(d.volunteer_name)}</b> has it, on the way to ${h(d.recipient_name)}.` : `<b>${h(d.volunteer_name)}</b> is coming. Pickup around <b>${clock(d.eta_pick)}</b>.`;
   else if (d.status === "posted" && d.recipient_name) msg = `Matched to <b>${h(d.recipient_name)}</b>. There's time, so Relay is choosing the best moment to ask drivers.`;
@@ -536,7 +607,7 @@ async function renderDonorHome() {
     const i = x.impact;
     kpis($("#dimp-kpis"), [["di-kg", "kg rescued", i.kg, v => kgf(v), "good"], ["di-meals", "meals served", i.meals, undefined, "good"], ["di-del", "deliveries", i.deliveries], ["di-post", "posted", i.posted]]);
     const done = x.donations.filter(d => d.status === "delivered");
-    setHTML($("#dimp-list"), done.length ? done.map(d => `<div class="hist-row"><span class="dot" style="--c:var(--delivered)"></span><b class="grow clip">${kgf(d.kg)} kg ${h(CAT[d.category])} → ${h(d.recipient_name)}</b><span class="num mute">~${Math.round(d.meals)} meals · ${clock(d.t_drop)}</span></div>`).join("")
+    setHTML($("#dimp-list"), done.length ? done.map(d => `<div class="hist-row"><span class="dot" style="--c:var(--delivered)"></span><b class="grow clip">${kgf(d.kg)} kg ${h(CAT[d.category])} → ${h(d.recipient_name)}</b><span class="num mute">~${Math.round(d.meals)} meals · ${clock(d.t_drop)}</span><a class="link" href="/receipt/${h(d.id)}" target="_blank" rel="noopener">Receipt</a></div>`).join("")
       : '<div class="empty small">Your first delivery will show up here.</div>');
   }
 }
@@ -659,8 +730,43 @@ async function renderSystem() {
       <span><span class="role-badge" style="--c:${ROLE_C[u.role] || "var(--mute)"}">${h(u.role ? ROLE[u.role][0] : "choosing…")}</span></span><span class="small clip">${h(u.org || u.entity || "—")}</span>
       <span>${u.role && u.role !== "admin" ? `<button class="btn ghost sm" data-act="reset-user" data-email="${h(u.email)}">Reset</button>` : ""}</span></div>`,
     '<div class="tiny mute" style="padding:10px 0">No one has signed in yet.</div>');
+  await renderMail();
   list($("#events"), x.events.slice(0, 60).reverse().map((e, i, a) => ({...e, k: `${e.t}|${e.text}|${a.slice(0, i).filter(z => z.t === e.t && z.text === e.text).length}`})).reverse(), e => e.k,
     e => `<div class="ev"><time>${h(e.t)}</time><span class="grow">${h(e.text)}</span>${e.sim ? '<span class="tag sim">sim</span>' : ""}</div>`);
+}
+
+const MAIL_ST = {sent: ["Sent", "var(--ok)"], preview: ["Preview", "var(--brand-2)"], queued: ["Sending…", "var(--warn)"], retrying: ["Retrying", "var(--warn)"], failed: ["Failed", "var(--bad)"]};
+let mbFilter = "";
+async function renderMail() {
+  const x = await api("/api/admin/outbox"), st = x.storage, em = x.email;
+  const ok = !st.error, fact = (k, v, wide) => `<div${wide ? ' style="grid-column:1/-1"' : ""}><small>${h(k)}</small><b>${h(v)}</b></div>`;
+  $("#st-badge").textContent = ok ? (st.pending ? `saving ${st.pending}…` : "all saved") : "retrying";
+  $("#st-badge").style.setProperty("--c", ok ? "var(--ok)" : "var(--bad)");
+  setHTML($("#st-facts"), fact("Backend", st.backend) + fact("Where", st.where, true) + fact("Events stored", st.events.toLocaleString()) + fact("Writes done", st.written.toLocaleString())
+    + (st.error ? `<div style="grid-column:1/-1;background:#fef2f2"><small>Last error (it keeps retrying)</small><b style="color:#b91c1c">${h(st.error)}</b></div>` : ""));
+  const smtp = em.mode !== "preview";
+  $("#em-badge").textContent = smtp ? (em.last_error ? "problem" : "sending") : "preview mode";
+  $("#em-badge").style.setProperty("--c", smtp ? (em.last_error ? "var(--bad)" : "var(--ok)") : "var(--brand-2)");
+  $("#em-line").textContent = smtp ? `Real emails go out through ${em.host}:${em.port} (${em.security}) from ${em.from}.`
+    : "No email service is set, so emails are written and kept here as previews. Set BREVO_API_KEY (or SMTP_HOST etc.) to send them for real.";
+  const c = em.counts || {};
+  setHTML($("#em-facts"), fact("Sent", c.sent || 0) + fact("Previews", c.preview || 0) + fact("Waiting", (c.queued || 0) + (c.retrying || 0)) + fact("Failed", c.failed || 0)
+    + (em.last_error ? `<div style="grid-column:1/-1;background:#fef2f2"><small>Last error</small><b style="color:#b91c1c">${h(em.last_error)}</b></div>` : ""));
+  const ms = x.messages.filter(m => !mbFilter || m.status === mbFilter);
+  list($("#mailbox"), ms.slice(0, 60), m => m.id, m => { const [lab, col] = MAIL_ST[m.status] || [m.status, "var(--mute)"];
+    return `<button class="mrow" data-act="mail-open" data-id="${h(m.id)}"><time>${h(ago(m.created))}</time><span class="to clip">${h(m.to)}</span><span class="clip"><b>${h(m.subject)}</b> <span class="tiny mute">${h(m.kind)}</span></span><span class="status" style="--c:${col}">${h(lab)}</span></button>`; },
+    '<div class="tiny mute" style="padding:12px 0">No emails yet. They appear as soon as people post, claim or deliver food.</div>');
+}
+async function openMail(id) {
+  const m = await api(`/api/admin/outbox/${encodeURIComponent(id)}`), [lab, col] = MAIL_ST[m.status] || [m.status, "var(--mute)"];
+  $("#mail-body").innerHTML = `<h2 id="mail-title">${h(m.subject)}</h2>
+    <div class="row wrap" style="gap:8px;margin-top:8px"><span class="status" style="--c:${col}">${h(lab)}</span><span class="chip static">To ${h(m.to)}</span><span class="chip static">${h(m.kind)}</span><span class="chip static">${new Date(m.created * 1000).toLocaleString()}</span>${m.attempts ? `<span class="chip static">${m.attempts} attempt${m.attempts > 1 ? "s" : ""}</span>` : ""}</div>
+    ${m.error ? `<div class="xp-note" style="margin-top:10px;color:#b91c1c">${h(m.error)}</div>` : ""}
+    <iframe class="mail-frame" sandbox title="Email preview"></iframe>
+    <details class="why"><summary>Plain-text version</summary><pre class="small" style="white-space:pre-wrap;margin-top:8px">${h(m.text)}</pre></details>
+    <div class="row" style="margin-top:14px;justify-content:flex-end"><button class="btn ghost" data-act="mail-resend" data-id="${h(m.id)}">Send again</button></div>`;
+  $("#mail-body iframe").srcdoc = m.html;
+  $("#mail-dlg").showModal();
 }
 
 // ---------------------------------------------------------------- admin: simulation lab
@@ -735,11 +841,21 @@ async function runCompare(btn) {
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-act]");
   if (!$("#me-menu").hidden && !e.target.closest(".me")) $("#me-menu").hidden = true;
+  if (!$("#notes").hidden && !e.target.closest(".bell-w")) $("#notes").hidden = true;
   if (!b) return;
   const a = b.dataset.act;
   if (a === "demo") return busy(b, async () => { APP.me = await api("/api/auth/demo", {method: "POST", body: JSON.stringify({role: b.dataset.role})}); afterLogin(); });
   if (a === "logout") return logout();
   if (a === "menu") { $("#me-menu").hidden = !$("#me-menu").hidden; return; }
+  if (a === "bell") { $("#notes").hidden = !$("#notes").hidden; if (!$("#notes").hidden) renderNotes(); return; }
+  if (a === "notes-read") return busy(b, async () => { await api("/api/notes/read", {method: "POST", body: JSON.stringify({ids: null})}); await pollNotes(); });
+  if (a === "note") return openNote(b);
+  if (a === "settings") { $("#me-menu").hidden = $("#notes").hidden = true; return openSettings(); }
+  if (a === "save-prefs") return savePrefs(b);
+  if (a === "test-email") return busy(b, async () => { const r = await api("/api/me/test-email", {method: "POST"}); toast(r.status === "preview" ? "Test email written as a preview (demo accounts never get real email, or no email service is set)" : `Test email on its way to ${r.to}`, r.status === "preview" ? "info" : "ok"); });
+  if (a === "mb-filter") { mbFilter = b.dataset.f; $$("#mb-filter button").forEach(x => x.classList.toggle("on", x === b)); return renderMail(); }
+  if (a === "mail-open") return busy(null, () => openMail(b.dataset.id));
+  if (a === "mail-resend") return busy(b, async () => { const r = await api(`/api/admin/outbox/${encodeURIComponent(b.dataset.id)}/resend`, {method: "POST"}); $("#mail-dlg").close(); toast(r.status === "queued" ? "Sending again" : "Re-written as a preview (no email service, or a demo address)", "info"); await renderMail(); });
   if (a === "ob-role") { OB.role = b.dataset.role; $$(".role-card").forEach(c => c.classList.toggle("on", c === b)); $("#ob-next").disabled = false; return; }
   if (a === "ob-next") return obStep2();
   if (a === "ob-back") { $("#ob-step1").hidden = false; $("#ob-step2").hidden = true; $("#ob-d2").classList.remove("on"); return; }
@@ -775,6 +891,13 @@ document.addEventListener("click", async e => {
   if (a === "lab-demo") return runDemo(b);
   if (a === "lab-compare") return runCompare(b);
   if (a === "lab-play") return play(!timer);
+});
+document.addEventListener("submit", e => {
+  if (e.target.id !== "em-test") return;
+  e.preventDefault();
+  const btn = e.target.querySelector("button"), to = $("#em-to").value.trim();
+  busy(btn, async () => { const r = await api("/api/admin/email/test", {method: "POST", body: JSON.stringify({to})});
+    toast(r.status === "queued" ? `Test email on its way to ${r.to}. Watch its status in the Mailbox.` : "Written as a preview: set BREVO_API_KEY or SMTP_HOST to send for real.", r.status === "queued" ? "ok" : "info"); await renderMail(); });
 });
 document.addEventListener("change", async e => {
   const id = e.target.id;

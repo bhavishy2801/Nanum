@@ -148,7 +148,7 @@ On PowerShell, set the variable first:
 $env:RELAY_POLICY="Relay-ML"; python app.py
 ```
 
-Delete `relay.db` to reset the live state; it's rebuilt by replaying the event log.
+Delete `relay.db` (or run `python store.py wipe` on MongoDB) to reset the live state; it's rebuilt by replaying the event log. Database and email setup: [INTEGRATIONS.md](INTEGRATIONS.md).
 
 ## 7. Step 6: tests
 

@@ -1,6 +1,6 @@
 # Relay: set up, run, test, present
 
-This is the complete playbook. The ML and RL internals are in [GUIDE.md](GUIDE.md).
+This is the complete playbook. The ML and RL internals are in [GUIDE.md](GUIDE.md). MongoDB, email (SMTP) and notifications are in [INTEGRATIONS.md](INTEGRATIONS.md).
 
 ---
 
@@ -30,7 +30,14 @@ RELAY_SIM=1                                       # the living city (see §3)
 
 `.env` is excluded from git. The client ID and the CARTO key are meant to be public, because the browser needs them. Keep your client **secret** out of this project entirely; Relay doesn't use it.
 
-### 1.3 Models and cached results
+### 1.3 Database and email (optional)
+
+- **Database.** With `MONGODB_URI` empty, Relay stores everything in a local SQLite file. Set it to use MongoDB (Atlas or local), then run `python store.py check`.
+- **Email.** With `SMTP_HOST` empty, emails are only written as previews, which admins can read in System → Mailbox. Set the `SMTP_*` keys to send them for real.
+
+Step-by-step setup for both (Atlas, Gmail App Password and others) is in **[INTEGRATIONS.md](INTEGRATIONS.md)**.
+
+### 1.4 Models and cached results
 
 Skip this if `models/` already holds the trained files.
 
@@ -52,7 +59,7 @@ python app.py
 
 Open **http://localhost:8000**.
 
-- **Reset the city:** stop the app, delete `relay.db`, and start it again. This also removes all accounts.
+- **Reset the city:** stop the app, then delete `relay.db` (SQLite) or run `python store.py wipe` (MongoDB), and start it again. This also removes all accounts.
 - **Different port:** `$env:PORT="8010"; python app.py`. Add that origin in Google Cloud too.
 
 ---
@@ -61,10 +68,12 @@ Open **http://localhost:8000**.
 
 | Role | How they get it | What they see |
 |---|---|---|
-| **Food donor** (restaurant, food chain outlet, kiosk, caterer, bakery, grocer, hotel, campus dining) | Sign in with Google, then choose "I have surplus food" | **Donate food** (paste, check, post), **My donations** (live map and 5-step tracker), **My impact** |
+| **Food donor** (restaurant, food chain outlet, kiosk, caterer, bakery, grocer, hotel, campus dining) | Sign in with Google, then choose "I have surplus food" | **Donate food** (paste, check, post), **My donations** (live map, 5-step tracker, receipts), **My impact** |
 | **Driver** | Google, then "I can drive food" (name, vehicle, start area) | **My rescues** (online/offline switch, offers, the current job with a pickup checklist and the handover code, map), **My impact** |
 | **Shelter / kitchen** | Google, then "I run a shelter" (manage an existing site or register a new one) | **Tonight** (free space per food type, "Full" switches, arriving food with the 4-digit code), **Received** |
 | **Admin** | Their Google email is in `RELAY_ADMINS` | Everything: **Live board**, **How Relay thinks**, **Donor / Driver / Shelter view** (act as anyone), **Simulation lab**, **Impact**, **System** |
+
+**Everyone** also gets the 🔔 bell and an email at each moment that matters to them: a donor hears when a driver accepts, when the food is picked up and when it's delivered (with a receipt), a driver gets offers and addresses, and a shelter gets the handover code. The full table is in INTEGRATIONS.md §4.
 
 The server enforces all of this. A restaurant can't open another restaurant's donations, the admin board, or a driver's screen; the API returns 403.
 
@@ -85,7 +94,12 @@ With the app running:
 python ps_check.py
 ```
 
-It should end with **21/21 checks passed**. It covers every problem-statement capability, plus sign-in and role isolation (signed-out visitors blocked; a restaurant can't see admin or driver data or other restaurants' donations). It signs in with the demo accounts and pauses the city while it runs.
+It should end with **25/25 checks passed**. It covers:
+- every problem-statement capability;
+- sign-in and role isolation (signed-out visitors blocked; a restaurant can't see admin or driver data or other restaurants' donations);
+- notifications and the email outbox.
+
+It signs in with the demo accounts and pauses the city while it runs.
 
 ```bash
 python test_relay.py
@@ -93,7 +107,18 @@ python test_relay.py
 
 These are the 7 property tests: safety, replay, budget, and the simulator against the data.
 
-In the app, **System** shows live health checks: database, policy, models, planner speed, food safety, living city, Google sign-in, map key, and a warning while demo accounts are on. It also shows everyone who has signed in and a live activity stream (simulated actions are tagged "sim").
+```bash
+python test_store_notify.py
+```
+
+These are 7 tests for SQLite and MongoDB storage, each role's messages, and a real SMTP send. They need `pip install mongomock aiosmtpd`.
+
+In the app, **System** shows:
+- live health checks: database, email, notifications, policy, models, planner speed, food safety, living city, Google sign-in, the map key, and a warning while demo accounts are on;
+- the **Database** and **Email** cards, with a test-send form;
+- the **Mailbox**: every email, as the person saw it;
+- everyone who has signed in;
+- a live activity stream (simulated actions are tagged "sim").
 
 ---
 
@@ -109,10 +134,11 @@ Use Google sign-in, or the demo buttons if you're offline or short of time.
 
 1. **Sign in as a restaurant** (Google, or the **Restaurant** demo). Tap the **🍛 Biryani, hot** example, then **Post donation**. The toast names the shelter.
    *Say:* "Thirty seconds, from the message a restaurant already types on WhatsApp."
-2. **My donations.** Watch the tracker: *Matched → Claimed* (a simulated driver usually accepts within a minute), then *Picked up → Delivered*. The map shows the route.
+2. **My donations.** Watch the tracker: *Matched → Claimed* (a simulated driver usually accepts within a minute), then *Picked up → Delivered*. The map shows the route. The 🔔 bell rings at each step; on delivery, confetti appears and a **🧾 Receipt** link.
+   *Say:* "Every person gets exactly the update they need, in the app and by email. The shelter gets the handover code; the restaurant never does."
 3. **Sign out, then sign in as Admin.** On the **Live board**, open a card's **Why this shelter?**. Point at a shelter ruled out because its "next service is 8.0 h after arrival".
    *Say:* "Food must be safe when it's eaten, not just when it's delivered."
-4. **How Relay thinks** (the showpiece, 90 seconds). Press **▶ Play tour**, or click through the 8 steps:
+4. **How Relay thinks** (the showpiece, 90 seconds). Press **⛶ Present** (or `F`) for full screen, then **Space** to play the tour, or use `←` `→` to step yourself. The camera follows the action and a narration line says what's happening. The 8 steps:
    1. food posted (the safety clock ring fills);
    2. rules test every shelter (✓/✕ with reasons) and pick one;
    3. the ML model's probability for each driver;
@@ -124,7 +150,7 @@ Use Google sign-in, or the demo buttons if you're offline or short of time.
 
    Then use **Try it yourself**: drag "Minutes until latest pickup" down and watch the agent start asking more drivers.
 5. **Simulation lab.** Click **Replay one night** (412 rule vs Relay + RL side by side), then **Compare 30 nights**.
-6. **System** (optional). All checks are green, and the activity stream shows the living city in real time.
+6. **System** (optional). All checks are green, and the activity stream shows the living city in real time. Open the **Mailbox** and click the "Delivered. Thank you!" email to show exactly what the restaurant received.
 
 ---
 
@@ -164,4 +190,5 @@ Use Google sign-in, or the demo buttons if you're offline or short of time.
 | Nothing happens after a restaurant posts | Check **System**: the living city may be paused. Drivers also reply more slowly late at night (that's the data) |
 | `Address already in use` | Another `python app.py` is running. Close it, or use `$env:PORT="8010"` |
 | Someone should pick a different role | Admin → **System → People → Reset**. They choose again on next sign-in |
+| MongoDB won't connect, or emails don't send | See the troubleshooting table in [INTEGRATIONS.md](INTEGRATIONS.md) §7. The System page shows the exact error |
 | Old UI after changes | A normal reload works, because the page and its files are cache-busted |

@@ -32,6 +32,50 @@
   function draw(path, c, o) { const L = path.getTotalLength(); path.style.strokeDasharray = `${L}`; return anim(path, [{strokeDashoffset: L}, {strokeDashoffset: 0}], c, {d: 700, ...o}); }
   function move(g, from, to, c, o) { return anim(g, [{transform: `translate(${from[0]}px,${from[1]}px)`}, {transform: `translate(${to[0]}px,${to[1]}px)`}], c, {d: 1100, ease: "cubic-bezier(.45,0,.2,1)", ...o}); }
   function rng(seed) { let s = 0; for (const ch of String(seed)) s = (s * 31 + ch.charCodeAt(0)) >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+  // camera: the SVG viewBox glides to whatever the step is about (zoom + pan), eased; replays jump straight there
+  const CAM = {x: 0, y: 0, w: W, h: H, tok: 0};
+  function setVB(b) { Object.assign(CAM, b); svg().setAttribute("viewBox", `${b.x.toFixed(1)} ${b.y.toFixed(1)} ${b.w.toFixed(1)} ${b.h.toFixed(1)}`); }
+  function camera(pts, c, o = {}) {
+    let b = {x: 0, y: 0, w: W, h: H};
+    if (pts && pts.length) {
+      const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]), pad = o.pad ?? 110, mn = o.min ?? 520;
+      let w = Math.max(Math.max(...xs) - Math.min(...xs) + 2 * pad, mn), hh = Math.max(Math.max(...ys) - Math.min(...ys) + 2 * pad, mn * H / W);
+      if (w / hh > W / H) hh = w * H / W; else w = hh * W / H;
+      w = Math.min(w, W); hh = Math.min(hh, H);
+      const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2 + (o.dy ?? 24);
+      b = {x: clamp(cx - w / 2, 0, W - w), y: clamp(cy - hh / 2, 0, H - hh), w, h: hh};
+    }
+    const tok = ++CAM.tok;
+    if (c.instant || reduce) { setVB(b); return Promise.resolve(); }
+    const from = {x: CAM.x, y: CAM.y, w: CAM.w, h: CAM.h}, t0 = performance.now(), D = o.d ?? 1300;
+    return new Promise(res => {
+      const f = now => {
+        if (tok !== CAM.tok) return res();
+        const p = clamp((now - t0) / D, 0, 1), e = p < .5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+        setVB({x: from.x + (b.x - from.x) * e, y: from.y + (b.y - from.y) * e, w: from.w + (b.w - from.w) * e, h: from.h + (b.h - from.h) * e});
+        p < 1 ? requestAnimationFrame(f) : res();
+      };
+      requestAnimationFrame(f);
+    });
+  }
+  // narration: one plain sentence per step, typed out like a presenter talking
+  const NARR = {tok: 0};
+  function narrate(text) {
+    const box = $("#xp-narr");
+    if (!box) return;
+    const tok = ++NARR.tok;
+    box.classList.toggle("empty", !text);
+    if (reduce || !text) { box.textContent = text || ""; return; }
+    let i = 0;
+    box.classList.add("typing");
+    const f = () => {
+      if (tok !== NARR.tok) return;
+      i = Math.min(text.length, i + 2);
+      box.textContent = text.slice(0, i);
+      if (i < text.length) setTimeout(f, 24); else box.classList.remove("typing");
+    };
+    f();
+  }
   const short = n => String(n).replace(/^Shelter\s+/, "").replace(/\s*\(.*\)$/, "");
   const pct = p => `${Math.round(p * 100)}%`;
 
@@ -65,6 +109,8 @@
   function build() {
     const s = svg(), D = X.D;
     s.innerHTML = "";
+    CAM.tok++;
+    setVB({x: 0, y: 0, w: W, h: H});
     const defs = el("defs", {}, s);
     defs.innerHTML = `<linearGradient id="xg" x1="0" x2="1"><stop offset="0" stop-color="#0f9d74"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient>
       <radialGradient id="xglow"><stop offset="0" stop-color="#10b981" stop-opacity=".35"/><stop offset="1" stop-color="#10b981" stop-opacity="0"/></radialGradient>
@@ -151,6 +197,8 @@
   SC[0] = async c => {   // food is posted
     const D = X.D, E = X.E, dn = D.donation;
     await fade(X.E.city, 1, {instant: true});
+    camera([E.donor.xy], c, {min: 460, d: 1600});
+    narrate(`${dn.donor} just posted ${kgf(dn.kg)} kg of food. A safety clock starts now: ${dur(dn.safe_min)} until it must be eaten.`);
     await pop(E.donor.inner, c);
     const frac = clamp(dn.safe_min / 240, 0, 1);
     anim(E.clock, [{strokeDashoffset: 238.8}, {strokeDashoffset: 238.8 * (1 - frac)}], c, {d: 1400});
@@ -165,6 +213,10 @@
   SC[1] = async c => {   // rules pick a shelter
     const D = X.D, E = X.E, dp = E.donor.xy;
     const order = [...D.shelters].sort((a, b) => a.km - b.km);
+    camera([dp, ...order.map(s => E.shelters[s.id].xy)], c, {pad: 80});
+    const nOk = D.shelters.filter(s => s.ok).length, ch = D.shelters.find(s => s.id === D.chosen);
+    narrate(ch ? `Hard safety rules test all ${D.shelters.length} shelters. ${nOk} pass, and ${short(ch.name)} is the best fit.`
+               : `Hard safety rules test all ${D.shelters.length} shelters. None can serve it safely, so a human is alerted.`);
     await Promise.all(order.map((s, i) => pop(E.shelters[s.id].inner, c, {delay: i * 60})));
     const ok = order.filter(s => s.ok), sc = ok.map(s => s.score), mx = Math.max(...sc, 1e-9), mn = Math.min(...sc, 0);
     panel(1, "Rules pick a shelter that can use it safely", `No AI here. For every shelter Relay checks hard rules: <b>will the food still be safe when they serve it?</b> Do they have space, are they open, do they accept this food? Among shelters that pass, it prefers ones that received the least recently (fairness) and are close.`,
@@ -202,6 +254,9 @@
   SC[2] = async c => {   // ML predicts
     const D = X.D, E = X.E;
     const elig = D.volunteers.filter(v => v.eligible), inel = D.volunteers.filter(v => !v.eligible);
+    camera([E.donor.xy, ...D.volunteers.map(v => E.vols[v.id].xy)], c, {pad: 70});
+    narrate(elig.length ? `A machine-learning model predicts each driver's chance of saying yes. The most likely: ${elig[0].name.split(" ")[0]}, at ${pct(elig[0].p)}.`
+                        : "No driver can reach the food in time, so nobody is asked.");
     await Promise.all(D.volunteers.map((v, i) => pop(E.vols[v.id].inner, c, {delay: i * 45})));
     if (!D.rl) { panel(2, "ML predicts who will say yes", "There is no safe shelter for this food, so no driver is asked. A human decides instead."); return; }
     for (const v of elig.slice(0, 8)) pop(E.vols[v.id].tag, c, {delay: 80 * elig.indexOf(v)});
@@ -221,6 +276,8 @@
     const D = X.D, E = X.E;
     if (!D.rl) { panel(3, "RL decides how many to ask", "Skipped: nothing to decide without a safe shelter."); return; }
     const f = D.rl.features;
+    camera([E.donor.xy, ...D.volunteers.slice(0, 8).map(v => E.vols[v.id].xy)], c, {pad: 90});
+    narrate(`Now the reinforcement-learning agent scores six options, from asking nobody to asking eight drivers. It picks: ${D.rl.best === 1 ? "ask the single most likely driver" : D.rl.best ? `ask the top ${D.rl.best}` : "wait for now"}.`);
     for (const v of D.volunteers.slice(8)) anim(E.vols[v.id].g, [{opacity: 1}, {opacity: .35}], c, {d: 400});
     anim(E.glow, [{opacity: 0}, {opacity: 1}, {opacity: .4}], c, {d: 1400});
     panel(3, "A reinforcement-learning agent decides how many to ask", `Ask too few and the food may not be claimed in time; ask too many and you pester volunteers until they quit. The agent looks at the situation and scores each option: ask <b>0, 1, 2, 3, 5 or 8</b> of the top drivers. Each score (a <b>Q-value</b>) is its estimate of the meals this rescue will save, minus a small cost for every ping.`,
@@ -240,7 +297,7 @@
     await c.wait(ks.length * 220 + 900);
     qBars(box, ks, qs, D.rl.best);
     const bi = ks.indexOf(D.rl.best), others = qs.map((q, i) => i === bi || q == null ? -Infinity : q), si = others.indexOf(Math.max(...others));
-    const gap = qs[bi] - qs[si], what = k => k ? `ask the top ${k}` : "wait (ask nobody yet)";
+    const gap = qs[bi] - qs[si], what = k => k === 1 ? "ask the most likely driver" : k ? `ask the top ${k}` : "wait (ask nobody yet)";
     $("#xp-qv").innerHTML = `<div class="verdict">The agent's choice: <b>${what(D.rl.best)}</b>. ${gap < .01
       ? `It's practically tied with “${what(ks[si])}” (difference under 0.01): with ${dur(f.slack)} left and ${Math.round(f.n_pool)} drivers able to help, the timing barely matters yet.`
       : `Its score ${qs[bi].toFixed(2)} beats the next best option (“${what(ks[si])}”) by ${gap.toFixed(2)}.`}${D.rl.best ? "" : " It will look again in 8 minutes, with the clock further along."}</div>`;
@@ -251,6 +308,9 @@
     const D = X.D, E = X.E, dp = E.donor.xy;
     if (!D.rl) { panel(4, "Offers go out", "Skipped."); return; }
     const asked = D.volunteers.filter(v => v.asked);
+    camera(asked.length ? [dp, ...asked.map(v => E.vols[v.id].xy)] : [dp], c, {pad: 100});
+    narrate(asked.length ? `Offers go to ${asked.length} driver${asked.length === 1 ? "" : "s"}. The chance at least one says yes: ${pct(D.rl.pclaim)}.`
+                         : "This time the agent waits. Nobody is pinged; it will look again in 8 minutes.");
     if (!asked.length) {
       panel(4, "This time, the agent waits", `No offers go out yet: nobody is pinged, so no volunteer is bothered. In 8 minutes the agent looks again with less time left, and asking becomes more attractive. If time runs short, a human is alerted before <b>${h(D.L)}</b>.`,
         `<div class="row" style="gap:16px">${ring(0)}<div class="xp-note">Chance of a claim this round: 0%, by choice. The rules still protect the food: the escalation deadline doesn't depend on the agent.</div></div>`);
@@ -258,7 +318,7 @@
       caption(["⏳ waiting is also a decision"]);
       return c.wait(600);
     }
-    panel(4, `Offers go to the top ${asked.length} driver${asked.length === 1 ? "" : "s"}`, `Each gets a message with the food, the distance and the approximate area (the exact address comes after they accept). The chance that <b>at least one</b> says yes is 1 − (1 − p₁)(1 − p₂)… If nobody answers within 8 minutes, the agent looks again with fresh information. If time runs short, a human is alerted before <b>${h(D.L)}</b>.`,
+    panel(4, asked.length === 1 ? "The offer goes to the most likely driver" : `Offers go to the top ${asked.length} drivers`, `Each gets a message with the food, the distance and the approximate area (the exact address comes after they accept). The chance that <b>at least one</b> says yes is 1 − (1 − p₁)(1 − p₂)… If nobody answers within 8 minutes, the agent looks again with fresh information. If time runs short, a human is alerted before <b>${h(D.L)}</b>.`,
       `<div class="row" style="gap:16px">${ring(D.rl.pclaim)}<div class="formula">P(at least one yes) = 1 − ${asked.slice(0, 4).map(v => `(1 − <b>${v.p.toFixed(2)}</b>)`).join("")}${asked.length > 4 ? "…" : ""} = <em>${pct(D.rl.pclaim)}</em></div></div>
        <div class="stack">${asked.map((v, i) => `<div class="xp-row" style="animation-delay:${i * 90}ms"><span>📨</span><span class="nm">${h(v.name)}</span><span class="tiny mute">${v.km} km</span><b class="num">${pct(v.p)}</b></div>`).join("")}</div>`);
     await Promise.all(asked.map(async (v, i) => {
@@ -286,6 +346,9 @@
     }
     const r = rng(D.donation.id + X.show), asked = D.volunteers.filter(v => v.asked).map(v => ({v, yes: r() < v.p, t: r()})).sort((a, b) => a.t - b.t);
     const winner = asked.find(a => a.yes), k = asked.length, meals = Math.round(D.donation.meals), cost = +(D.lam * k).toFixed(2);
+    camera([dp, E.shelters[D.chosen].xy, ...asked.map(a => E.vols[a.v.id].xy)], c, {pad: 90});
+    narrate(winner ? `${winner.v.name.split(" ")[0]} said yes and delivers the food. Reward: ${meals} meals saved minus ${cost} for ${k} ping${k === 1 ? "" : "s"}.`
+                   : `Nobody answered this round. The agent pays ${cost} for ${k === 1 ? "the ping" : "the pings"} and decides again; a human is alerted in time.`);
     panel(5, winner ? "Someone said yes. Here's the reward." : "Nobody answered this time", `Below is one possible outcome, drawn from each driver's probability. ${winner ? `<b>${h(winner.v.name)}</b> accepts, picks the food up and delivers it.` : "That happens: it's why the agent weighs the odds, and why a human is alerted in time."} The <b>reward</b> is what the agent was trained to maximise over a whole rescue: meals rescued, minus ${D.lam} for every ping.`,
       `<div class="ledger" id="xp-led"></div><div class="xp-note">The live agent doesn't change while running; everything it knows came from training on past nights (next step). Offers and outcomes like this one become new training data when you re-run <code>python ml.py rl</code>.</div>`);
     const led = $("#xp-led");
@@ -312,7 +375,11 @@
         anim(p, [{transform: `translate(${sh.xy[0]}px,${sh.xy[1]}px)`, opacity: 1}, {transform: `translate(${sh.xy[0] + Math.cos(ang) * d}px,${sh.xy[1] + Math.sin(ang) * d}px)`, opacity: 0}], c, {d: 900}).then(() => p.remove());
       }
       led.insertAdjacentHTML("afterbegin", `<div class="ln plus"><span>Meals rescued</span><b>+${meals}</b></div>`);
-      led.insertAdjacentHTML("beforeend", `<div class="ln total"><span>Reward for this rescue</span><b class="num">${(meals - cost).toFixed(2)}</b></div>`);
+      led.insertAdjacentHTML("beforeend", `<div class="ln total"><span>Reward for this rescue</span><b class="num" id="xp-rew">0.00</b></div>`);
+      countTo($("#xp-rew"), meals - cost, v => v.toFixed(2));
+      const plus = el("text", {x: sh.xy[0], y: sh.xy[1] - 30, "text-anchor": "middle", style: "font:800 20px Inter,system-ui,sans-serif;fill:#10b981", opacity: 0}, E.fx);
+      plus.textContent = `+${meals} meals`;
+      anim(plus, [{opacity: 0, transform: "translateY(10px)"}, {opacity: 1, transform: "translateY(-6px)", offset: .3}, {opacity: 0, transform: "translateY(-40px)"}], c, {d: 2200});
     } else {
       led.insertAdjacentHTML("beforeend", `<div class="ln total"><span>Reward so far</span><b class="num">${(-cost).toFixed(2)}</b></div><div class="ln"><span class="tiny mute">Next: the agent decides again; a human is alerted before ${h(D.L)}.</span></div>`);
     }
@@ -321,6 +388,8 @@
   };
   SC[6] = async c => {   // how it learned
     const T = X.T, E = X.E;
+    camera(null, c, {d: 900});
+    narrate(`It learned offline from ${T.rows.toLocaleString()} past decisions: each round, the reward it saw updates what it expects, until its choices stop changing.`);
     anim(E.city, [{opacity: 1}, {opacity: 0}], c, {d: 400});
     anim(E.train, [{opacity: 0}, {opacity: 1}], c, {d: 500, delay: 200});
     E.train.innerHTML = "";
@@ -357,13 +426,23 @@
       poly.setAttribute("points", T.bellman.slice(0, n).map((b, j) => `${(j / (T.bellman.length - 1)) * cw},${14 + chh - (b / mxB) * chh}`).join(" "));
       dotEnd.setAttribute("cx", ((n - 1) / (T.bellman.length - 1)) * cw); dotEnd.setAttribute("cy", 14 + chh - (T.bellman[n - 1] / mxB) * chh);
       $("#xp-tv").innerHTML = `<div class="verdict" style="animation:none">${it < T.iterations ? `Round ${it + 1}` : "Final model"}: in “${h(st.name)}”, the agent would <b>ask ${best}</b>.</div>`;
-      if (!c.instant) for (let j = 0; j < 26; j++) { const d = dots[(it * 37 + j * 11) % dots.length]; anim(d, [{fill: "#c7d2fe", transform: "scale(1)"}, {fill: "#8b5cf6", transform: "scale(1.45)"}, {fill: "#c7d2fe", transform: "scale(1)"}], c, {d: 500, delay: j * 10}); }
+      if (!c.instant) {
+        for (let j = 0; j < 26; j++) { const d = dots[(it * 37 + j * 11) % dots.length]; anim(d, [{fill: "#c7d2fe", transform: "scale(1)"}, {fill: "#8b5cf6", transform: "scale(1.45)"}, {fill: "#c7d2fe", transform: "scale(1)"}], c, {d: 500, delay: j * 10}); }
+        for (let j = 0; j < 6; j++) {   // a few decisions (with their rewards) flow into the model: that's the update
+          const d = dots[(it * 53 + j * 29) % dots.length], pk = el("g", {transform: `translate(${d.getAttribute("cx")} ${d.getAttribute("cy")})`}, g);
+          el("circle", {r: 4.5, fill: "#8b5cf6", stroke: "#fff", "stroke-width": 1.5}, pk);
+          move(pk, [+d.getAttribute("cx"), +d.getAttribute("cy")], [640 + j * 40, 195], c, {d: 650, delay: j * 45}).then(() => pk.remove());
+        }
+        anim(fx, [{transform: "translate(560px,300px) scale(1)"}, {transform: "translate(560px,300px) scale(1.035)"}, {transform: "translate(560px,300px) scale(1)"}], c, {d: 420, delay: 380});
+      }
       await c.wait(it < 3 ? 700 : 380);
     }
     caption([]);
   };
   SC[7] = async c => {   // results
-    const R = X.R, E = X.E;
+    const R = X.R, E = X.E, rr0 = R?.table["Relay-RL"];
+    camera(null, c, {d: 700});
+    narrate(rr0 ? `On 30 nights it never saw, Relay + RL rescued ${(rr0.rescue_rate[0] * 100).toFixed(1)}% of the food with just ${rr0.notif_per_rescue[0].toFixed(1)} pings per rescue.` : "");
     anim(E.city, [{opacity: 1}, {opacity: 0}], c, {d: 300});
     anim(E.train, [{opacity: 1}, {opacity: 0}], c, {d: 300});
     anim(E.res, [{opacity: 0}, {opacity: 1}], c, {d: 500, delay: 200});
@@ -477,6 +556,7 @@
     if (a === "xp-prev") { X.playing = false; return goto(X.i - 1); }
     if (a === "xp-play") { X.playing = !X.playing; if (X.playing) goto(X.i >= STEPS.length - 1 ? 0 : X.i); else { X.gen++; stepsUI(); } return; }
     if (a === "xp-new") return fresh(b);
+    if (a === "xp-full") return present();
     if (a === "xp-src") { X.live = b.dataset.live === "1"; $$("#xp-src button").forEach(x => x.classList.toggle("on", x === b)); return fresh(null); }
     if (a === "pg-lam") { PG.lam = b.dataset.lam; $$("#pg-lam button").forEach(x => x.classList.toggle("on", x === b)); return askQ(); }
   });
@@ -487,6 +567,23 @@
     PG.v[m[1]] = +e.target.value;
     $(`#pg-${m[1]}-o`).textContent = sl[5](+e.target.value);
     askQ();
+  });
+  function present() {
+    const card = $(".card.xp");
+    if (document.fullscreenElement) return document.exitFullscreen();
+    card.requestFullscreen?.().catch(() => toast("Full screen isn't available here. Use F11 instead.", "info"));
+  }
+  document.addEventListener("fullscreenchange", () => {
+    const on = document.fullscreenElement === $(".card.xp");
+    $("#xp-full").textContent = on ? "✕ Exit presenter" : "⛶ Present";
+  });
+  document.addEventListener("keydown", e => {   // presenter keys, only while this tab is open and not typing
+    if (!$("#v-thinks")?.classList.contains("on") || e.target.closest("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); X.playing = false; goto(X.i + 1); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); X.playing = false; goto(X.i - 1); }
+    else if (e.key === " ") { e.preventDefault(); $("#xp-play").click(); }
+    else if (e.key === "f" || e.key === "F") { e.preventDefault(); present(); }
+    else if (/^[1-8]$/.test(e.key)) { X.playing = false; goto(+e.key - 1); }
   });
   window.XP = {show, hide};
 })();

@@ -1,0 +1,13 @@
+.env
+.git
+__pycache__/
+*.pyc
+relay.db
+relay.db-*
+relay_data.zip
+relay_data/*
+!relay_data/donations.csv
+!relay_data/offers.csv
+!relay_data/volunteers.csv
+!relay_data/recipients.csv
+*.pdf

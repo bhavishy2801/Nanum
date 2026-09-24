@@ -89,10 +89,19 @@
         <span class="pill" id="sim-pill" hidden title="Everyone who isn't signed in is simulated"><span class="live-dot"></span><span>City sim <b id="sim-speed"></b></span></span>
         <span class="pill" id="policy-pill" hidden title="The dispatch policy deciding who gets asked and when">Dispatch <b id="policy"></b></span>
         <span class="pill" id="live"><span class="live-dot"></span><span id="clock" class="num">…</span></span>
+        <div class="bell-w">
+          <button class="bell" data-act="bell" aria-label="Notifications" aria-haspopup="true"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 21h4"/></svg><span class="bell-n num" id="bell-n" hidden></span></button>
+          <div class="notes" id="notes" hidden>
+            <div class="notes-h"><b>Notifications</b><button class="link" data-act="notes-read">Mark all read</button></div>
+            <div class="notes-list" id="notes-list"></div>
+            <div class="notes-f"><button class="link" data-act="settings"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>Email settings</button></div>
+          </div>
+        </div>
         <div class="me">
           <button class="me-btn" data-act="menu" aria-haspopup="true"><span class="avatar" id="av"></span><svg class="i" viewBox="0 0 24 24" width="14" height="14"><path d="M6 9l6 6 6-6"/></svg></button>
           <div class="me-menu" id="me-menu" hidden>
             <div class="who"><b id="me-name"></b><div class="tiny mute clip" id="me-email"></div><div style="margin-top:8px"><span class="pill role" id="me-role"></span></div></div>
+            <button data-act="settings"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>Email &amp; notifications</button>
             <button data-act="logout"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</button>
           </div>
         </div>
@@ -130,13 +139,15 @@
       <div class="card xp">
         <div class="xp-steps" id="xp-steps"></div>
         <div class="xp-body">
-          <div class="xp-canvas"><svg id="xp-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Animated decision"></svg><div class="xp-caption" id="xp-caption"></div></div>
+          <div class="xp-canvas"><div class="xp-narr empty" id="xp-narr" aria-live="polite"></div><svg id="xp-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Animated decision"></svg><div class="xp-caption" id="xp-caption"></div></div>
           <aside class="xp-panel" id="xp-panel"></aside>
         </div>
         <div class="xp-controls">
           <div class="row"><button class="btn ghost sm" data-act="xp-prev">◀ Back</button><button class="btn sm" data-act="xp-play" id="xp-play">▶ Play tour</button><button class="btn ghost sm" data-act="xp-next">Next ▶</button></div>
           <div class="prog"><i id="xp-prog"></i></div>
           <span class="tiny mute" id="xp-count"></span>
+          <span class="kbd-hint tiny mute"><kbd>←</kbd><kbd>→</kbd> step · <kbd>Space</kbd> play · <kbd>F</kbd> present</span>
+          <button class="btn ghost sm" data-act="xp-full" id="xp-full">⛶ Present</button>
         </div>
       </div>
       <div class="card" style="margin-top:18px">
@@ -266,6 +277,21 @@
     <section class="view" id="v-system">
       <div class="view-head"><div><h1>System</h1><p>Is everything working? Health checks, the living-city simulation, people and every event as it happens.</p></div><span class="tiny mute" id="sys-up"></span></div>
       <div class="health" id="health"></div>
+      <div class="grid-2e" style="margin-top:18px">
+        <div class="card"><div class="row between"><h2>Database</h2><span class="status" id="st-badge" style="--c:var(--ok)">…</span></div>
+          <p class="small mute" style="margin-top:4px">Every event, account, session, notification and email is saved here, in order, by one background writer that retries until it succeeds.</p>
+          <div class="facts" id="st-facts"></div></div>
+        <div class="card"><div class="row between"><h2>Email</h2><span class="status" id="em-badge" style="--c:var(--ok)">…</span></div>
+          <p class="small mute" style="margin-top:4px" id="em-line"></p>
+          <div class="facts" id="em-facts"></div>
+          <form class="row wrap" id="em-test" style="margin-top:12px;gap:8px"><input class="input" id="em-to" type="email" required maxlength="200" placeholder="you@example.com" style="flex:1;min-width:180px" aria-label="Send a test email to"><button class="btn sm" data-act="em-test" type="submit">Send test email</button></form></div>
+      </div>
+      <div class="card" style="margin-top:18px">
+        <div class="row between wrap"><div><h2>Mailbox</h2><p class="small mute" style="margin-top:4px">Every email Relay has written, newest first. Click one to see exactly what the person received.</p></div>
+          <div class="seg" id="mb-filter"><button class="on" data-act="mb-filter" data-f="">All</button><button data-act="mb-filter" data-f="sent">Sent</button><button data-act="mb-filter" data-f="preview">Previews</button><button data-act="mb-filter" data-f="failed">Failed</button></div></div>
+        <div class="mhead"><span>When</span><span>To</span><span>Subject</span><span>Status</span></div>
+        <div id="mailbox"></div>
+      </div>
       <div class="grid-2" style="margin-top:18px">
         <div class="stack">
           <div class="card"><h2>Living city</h2><p class="small mute" style="margin-top:4px">Restaurants, drivers and shelters that aren't signed-in people are simulated from the relay_data behaviour. Signed-in people are never auto-driven.</p>
@@ -283,6 +309,8 @@
     </section>
   </main>
 </div>
+<dialog class="modal" id="settings-dlg" aria-labelledby="set-title"><form method="dialog" class="modal-x"><button aria-label="Close">✕</button></form><div id="settings-body"></div></dialog>
+<dialog class="modal wide" id="mail-dlg" aria-labelledby="mail-title"><form method="dialog" class="modal-x"><button aria-label="Close">✕</button></form><div id="mail-body"></div></dialog>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="/static/app.js?v=__V__"></script>
