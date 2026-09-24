@@ -1,0 +1,88 @@
+{
+ "1_times_are_relative": {
+  "offers_before_their_donation_was_posted_if_read_as_absolute": 0.9687203277176419,
+  "first_offer_offset_median_min": 0.0,
+  "fix": "t_abs = donations.post_t + offer_t (same for accepted_at / pickup_time_min / delivered_time_min)"
+ },
+ "2_rl_transitions_misaligned": {
+  "n_offers_match_if_binned_by_RELATIVE_time": 1.0,
+  "n_offers_match_if_binned_by_true_time": 0.22797814207650274,
+  "share_of_reward_bearing_steps_in_first_16_of_61": 0.8191443388072601,
+  "verdict": "rewards/offers are front-loaded onto the wrong steps; rebuilt from the raw logs instead"
+ },
+ "3_reward_decoded": {
+  "formula": "meals claimed in the next 8 min - 0.02 * offers sent (+ an unexplained terminal term)",
+  "non_terminal_steps_exactly_explained": 0.9990555555555556,
+  "terminal_term_mean": -186.50666666666666,
+  "notification_cost_lambda": 0.02
+ },
+ "4_bc_dataset_labels_empty": {
+  "rows": 310978,
+  "nonzero_n_offers_epoch": 0,
+  "nonzero_escalate": 0,
+  "fix": "BC labels rebuilt from offers.csv (offers per donation per 8-min step)"
+ },
+ "5_p_hat_is_the_oracle": {
+  "share_p_hat_equals_p_true": 1.0,
+  "consequence": "neither is usable as a feature; p_true is only used as the ceiling"
+ },
+ "6_late_flag_uses_relative_time": {
+  "matches_offer_t_rel_ge_240": 1.0,
+  "matches_real_clock_ge_22h": 0.39584520224627656,
+  "late_share_logged": 0.0006917880686904858,
+  "consequence": "late-night effect not learnable from these logs; the model uses the prior -0.8"
+ },
+ "7_true_acceptance_recovered": {
+  "logit_p_true": {
+   "const": -0.0,
+   "theta_v": 1.0,
+   "distance_km": -0.35,
+   "late": -0.8,
+   "log1p_n7": -0.3,
+   "weight_ratio": -0.5
+  },
+  "r2": 1.0
+ },
+ "8_response_process": {
+  "p_respond": 0.7509427307994899,
+  "accept_given_respond": 0.15426925091671032,
+  "mean_p_true_given_respond": 0.15133515455355825,
+  "delay_lognormal_mu_sigma": [
+   1.3882879881822383,
+   0.8003357571005968
+  ],
+  "accept_within_8_min": 0.8048123646156549,
+  "cancel_given_accept": 0.07921081903869796,
+  "no_show_given_accept": 0.030091914993267372,
+  "accepted_offers_that_became_the_assignment": 0.6793513260347754
+ },
+ "9_world": {
+  "distance_is_haversine_from_home": 1.0,
+  "pickup_leg_min_fit": [
+   3.0,
+   5.0
+  ],
+  "drop_leg_min_fit": [
+   3.0,
+   15.0
+  ],
+  "deliveries_outside_listed_recipient_hours": 0.761203033436746,
+  "cooked_to_recipients_serving_8h_later": 921,
+  "pickups_after_donor_ready_until": 0.12271630472250948,
+  "detour_min_all_zero": true
+ },
+ "10_outcomes": {
+  "status": {
+   "delivered": 11587,
+   "open": 332,
+   "expired": 175
+  },
+  "safety_violations_logged": 17,
+  "escalations_logged": 0,
+  "episodes_by_policy": {
+   "greedy": 213,
+   "static412": 58,
+   "random": 29
+  }
+ }
+}

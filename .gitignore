@@ -1,0 +1,5 @@
+.env
+relay.db
+relay.db-*
+__pycache__/
+relay_data/

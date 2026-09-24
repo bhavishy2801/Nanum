@@ -1,0 +1,1030 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay · Food Rescue</title>
+<meta name="description" content="Relay: deadline-aware food rescue dispatch">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6fb; --surface:#fff; --surface-2:#f8fafc; --ink:#0f172a; --ink-2:#334155; --mute:#64748b; --line:#e5e9f2;
+  --brand:#0f9d74; --brand-2:#0ea5e9; --brand-soft:#e7f7f1;
+  --posted:#94a3b8; --offered:#3b82f6; --claimed:#f59e0b; --picked_up:#8b5cf6; --delivered:#10b981; --expired:#ef4444; --diverted:#b45309;
+  --ok:#10b981; --warn:#f59e0b; --bad:#ef4444;
+  --r:16px; --r-sm:10px;
+  --sh-1:0 1px 2px rgba(15,23,42,.05),0 1px 1px rgba(15,23,42,.03);
+  --sh-2:0 8px 24px -8px rgba(15,23,42,.14),0 2px 6px rgba(15,23,42,.05);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:-20% -10% auto -10%;height:520px;z-index:-1;pointer-events:none;
+  background:radial-gradient(40% 60% at 15% 20%,rgba(16,185,129,.13),transparent 70%),radial-gradient(35% 55% at 85% 10%,rgba(14,165,233,.12),transparent 70%)}
+button,input,select,textarea{font:inherit;color:inherit}
+h1,h2,h3,p{margin:0}
+.num{font-variant-numeric:tabular-nums}
+.clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mute{color:var(--mute)} .small{font-size:13px} .tiny{font-size:12px}
+.row{display:flex;align-items:center;gap:10px;min-width:0} .between{justify-content:space-between} .wrap{flex-wrap:wrap} .grow{flex:1;min-width:0}
+.stack>*+*{margin-top:12px}
+
+/* header */
+.top{position:sticky;top:0;z-index:1000;background:rgba(255,255,255,.78);backdrop-filter:saturate(180%) blur(14px);-webkit-backdrop-filter:saturate(180%) blur(14px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1360px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:-.02em}
+.logo-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand-2));display:grid;place-items:center;box-shadow:0 6px 16px -6px rgba(15,157,116,.7);position:relative;overflow:hidden}
+.logo-mark::after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,.45) 50%,transparent 70%);transform:translateX(-100%);animation:sheen 4s var(--ease) infinite 1s}
+.logo small{display:block;font-weight:500;font-size:12px;color:var(--mute);letter-spacing:0}
+.pills{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.pill-live,.pill-policy{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;background:var(--surface);border:1px solid var(--line);box-shadow:var(--sh-1);white-space:nowrap}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(16,185,129,.6);animation:pulse 2s infinite}
+.pill-live.off .live-dot{background:var(--bad);animation:none}
+.pill-policy b{color:var(--brand)}
+
+/* tabs */
+.tabs{max-width:1360px;margin:0 auto;padding:0 20px;position:relative;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{border:0;background:none;padding:12px 14px 14px;display:inline-flex;align-items:center;gap:8px;color:var(--mute);font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap;border-radius:10px 10px 0 0;transition:color .2s}
+.tab:hover{color:var(--ink)} .tab.on{color:var(--ink)}
+.tab svg{width:18px;height:18px}
+.tab-ink{position:absolute;bottom:0;height:3px;border-radius:3px 3px 0 0;background:linear-gradient(90deg,var(--brand),var(--brand-2));transition:left .35s var(--ease),width .35s var(--ease)}
+svg.i{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+main{max-width:1360px;margin:0 auto;padding:22px 20px 60px}
+.view{display:none} .view.on{display:block;animation:viewIn .45s var(--ease) both}
+.view-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.view-head h1{font-size:clamp(22px,2.4vw,28px);font-weight:800;letter-spacing:-.025em}
+.view-head p{color:var(--mute);margin-top:4px;max-width:720px}
+
+/* surfaces */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh-1);padding:18px;min-width:0;transition:box-shadow .25s,border-color .25s,transform .25s var(--ease)}
+.card.lift:hover{box-shadow:var(--sh-2);transform:translateY(-2px)}
+.card h2{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.card h2 .step{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--brand-soft);color:var(--brand);font-size:13px;margin-right:8px}
+.grid-2{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:18px;align-items:start}
+.grid-2e{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}
+@media (max-width:980px){.grid-2,.grid-2e{grid-template-columns:minmax(0,1fr)}}
+
+/* KPIs */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}
+@media (max-width:760px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{padding:16px 18px;position:relative;overflow:hidden}
+.kpi .v{font-size:clamp(24px,3vw,32px);font-weight:800;letter-spacing:-.03em;line-height:1.1}
+.kpi .l{color:var(--mute);font-size:13px;font-weight:500;margin-top:4px}
+.kpi .glyph{position:absolute;right:14px;top:14px;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--surface-2);color:var(--mute)}
+.kpi.alert{border-color:#fecaca;background:linear-gradient(180deg,#fff,#fff5f5)} .kpi.alert .v{color:var(--bad)} .kpi.alert .glyph{background:#fee2e2;color:var(--bad)}
+
+/* map */
+.card.map-card{padding:0;overflow:hidden;position:sticky;top:124px}
+.map{height:clamp(340px,62vh,640px);width:100%;background:#eef2f7}
+.map-foot{display:flex;gap:12px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--mute)}
+.legend{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:50%;background:var(--c)}
+.map-off{display:grid;place-items:center;height:100%;color:var(--mute);padding:20px;text-align:center}
+@media (max-width:980px){.map-card{position:static}}
+.pin{display:block;width:18px;height:18px;border-radius:50%;background:var(--c);border:3px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.35);transition:background .4s}
+.pin.esc{animation:pinPulse 1.6s infinite}
+.pin.done{width:12px;height:12px;border-width:2px;opacity:.55;margin:3px}
+.house{display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:#fff;border:1px solid var(--line);box-shadow:0 2px 6px rgba(15,23,42,.18);color:var(--brand)}
+.house.full{color:var(--bad)}
+.house svg{width:15px;height:15px}
+.leaflet-tooltip{border-radius:8px;border:0;box-shadow:var(--sh-2);font:12px/1.4 Inter,system-ui,sans-serif;padding:6px 9px}
+.leaflet-container{font-family:Inter,system-ui,sans-serif}
+
+/* queue */
+.col-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 2px 12px}
+.col-head h2{font-size:16px;font-weight:700}
+.queue>.item+.item{margin-top:12px}
+.rescue{padding:16px}
+.rescue .title{display:flex;align-items:center;gap:10px;min-width:0}
+.rescue .title b{font-size:15px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--c);flex:none;box-shadow:0 0 0 4px color-mix(in srgb,var(--c) 18%,transparent)}
+.sub{color:var(--ink-2);font-size:13.5px;margin-top:6px}
+.metrics{display:flex;gap:16px;align-items:center;margin-top:14px}
+.meter{flex:1;min-width:0}
+.bar{height:8px;border-radius:99px;background:#eef2f7;overflow:hidden;margin:6px 0 4px}
+.bar i{display:block;height:100%;border-radius:99px;transition:width .9s var(--ease),background .4s}
+.bar i.ok{background:linear-gradient(90deg,#34d399,var(--ok))} .bar i.warn{background:linear-gradient(90deg,#fbbf24,var(--warn))} .bar i.bad{background:linear-gradient(90deg,#f87171,var(--bad))}
+.ring{flex:none;display:flex;flex-direction:column;align-items:center;gap:4px}
+.ring .g{position:relative;width:58px;height:58px;display:grid;place-items:center}
+.ring svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:5}
+.ring .track{stroke:#eef2f7}
+.ring .val{stroke-dasharray:113.1;stroke-linecap:round;transition:stroke-dashoffset 1s var(--ease),stroke .4s}
+.ring.ok .val{stroke:var(--ok)} .ring.warn .val{stroke:var(--warn)} .ring.bad .val{stroke:var(--bad)}
+.ring span{font-weight:800;font-size:14px;line-height:1}
+.ring small{font-size:10.5px;color:var(--mute);white-space:nowrap}
+.note-line{margin-top:12px;font-size:13px;color:var(--ink-2)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);font-size:12.5px;font-weight:500;color:var(--ink-2);cursor:pointer;transition:all .2s var(--ease)}
+.chip:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);transform:translateY(-1px)}
+.chip.static{cursor:default} .chip.static:hover{transform:none;border-color:var(--line);color:var(--ink-2);background:var(--surface-2)}
+.chip .av{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--brand),var(--brand-2));flex:none}
+.status{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;color:var(--c);background:color-mix(in srgb,var(--c) 12%,#fff);border:1px solid color-mix(in srgb,var(--c) 25%,#fff);transition:all .4s}
+.alert-strip{margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 12px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px;font-weight:500}
+.rescue.is-esc{border-color:#fca5a5;animation:glow 2.4s infinite}
+details.why{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
+details.why summary{cursor:pointer;color:var(--brand);font-size:13px;font-weight:600;list-style:none;display:flex;align-items:center;gap:6px}
+details.why summary::-webkit-details-marker{display:none}
+details.why summary::before{content:"";width:6px;height:6px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform .25s}
+details.why[open] summary::before{transform:rotate(45deg)}
+details.why ul{list-style:none;padding:0;margin:10px 0 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;animation:fadeIn .3s both}
+details.why li{display:flex;gap:8px;font-size:12.5px;align-items:flex-start;padding:6px 8px;border-radius:8px;background:var(--surface-2);min-width:0}
+details.why li b{white-space:nowrap}
+details.why li span{color:var(--mute);overflow-wrap:anywhere}
+details.why li.good{background:var(--brand-soft)} details.why li.good span{color:var(--brand)}
+.closed-row{display:flex;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--line);font-size:13px;min-width:0}
+.closed-row:last-child{border-bottom:0}
+
+/* forms & buttons */
+.btn{--b:var(--brand);display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 16px;border-radius:12px;border:1px solid var(--b);background:var(--b);color:#fff;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap;position:relative;transition:transform .15s var(--ease),box-shadow .25s,filter .2s,opacity .2s;box-shadow:0 6px 16px -8px color-mix(in srgb,var(--b) 80%,transparent)}
+.btn:hover{filter:brightness(1.06);box-shadow:0 10px 22px -10px color-mix(in srgb,var(--b) 90%,transparent)}
+.btn:active{transform:scale(.97)}
+.btn.ghost{background:var(--surface);color:var(--ink);border-color:var(--line);box-shadow:var(--sh-1)}
+.btn.ghost:hover{border-color:#cbd5e1}
+.btn.danger{--b:var(--bad)} .btn.sm{padding:7px 12px;font-size:13px;border-radius:10px}
+.btn[aria-busy="true"]{color:transparent;pointer-events:none}
+.btn[aria-busy="true"]::after{content:"";position:absolute;width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;animation:spin .7s linear infinite}
+.btn.ghost[aria-busy="true"]::after{border-color:#cbd5e1;border-top-color:var(--ink)}
+.btn:disabled{opacity:.5;pointer-events:none}
+:focus-visible{outline:3px solid color-mix(in srgb,var(--brand) 45%,transparent);outline-offset:2px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field>span{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.input,select.input,textarea.input{width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);transition:border-color .2s,box-shadow .2s;min-width:0}
+.input:hover{border-color:#cbd5e1}
+.input:focus{outline:0;border-color:var(--brand);box-shadow:0 0 0 4px color-mix(in srgb,var(--brand) 16%,transparent)}
+textarea.input{min-height:96px;resize:vertical;line-height:1.5}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.hint{font-size:12.5px;color:var(--mute)}
+.switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;font-size:13.5px;font-weight:500;user-select:none}
+.switch input{appearance:none;-webkit-appearance:none;width:40px;height:23px;border-radius:99px;background:#dbe1ea;position:relative;cursor:pointer;transition:background .25s;flex:none;margin:0}
+.switch input::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:transform .25s var(--ease)}
+.switch input:checked{background:var(--brand)} .switch input:checked::after{transform:translateX(17px)}
+.switch.red input:checked{background:var(--bad)}
+.examples{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.parsed{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--brand);background:var(--brand-soft);padding:4px 10px;border-radius:999px;animation:pop .4s var(--ease)}
+.pickmap{height:220px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:#eef2f7}
+.code-in{font-size:24px;letter-spacing:.5em;text-align:center;font-weight:700;max-width:200px;padding-left:calc(12px + .5em)}
+
+/* stepper */
+.steps{display:flex;align-items:flex-start;margin:16px 0 4px;position:relative}
+.steps .s{flex:1;text-align:center;position:relative;font-size:11.5px;color:var(--mute);font-weight:600;min-width:0}
+.steps .s::before{content:"";position:absolute;top:10px;left:-50%;right:50%;height:3px;background:#e5e9f2;z-index:0}
+.steps .s:first-child::before{display:none}
+.steps .s.done::before,.steps .s.cur::before{background:linear-gradient(90deg,var(--brand),var(--brand-2))}
+.steps .s i{position:relative;z-index:1;display:grid;place-items:center;width:23px;height:23px;margin:0 auto 6px;border-radius:50%;background:#fff;border:2px solid #e5e9f2;transition:all .4s var(--ease)}
+.steps .s.done i{background:var(--brand);border-color:var(--brand);color:#fff}
+.steps .s.cur i{border-color:var(--brand);box-shadow:0 0 0 5px color-mix(in srgb,var(--brand) 18%,transparent);animation:pulseRing 1.8s infinite}
+.steps .s.done,.steps .s.cur{color:var(--ink)}
+.steps .s.fail i{background:var(--bad);border-color:var(--bad);color:#fff}
+.steps .s i svg{width:12px;height:12px}
+.steps span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 2px}
+
+/* empty & skeleton */
+.empty{text-align:center;padding:34px 20px;color:var(--mute)}
+.empty .art{width:64px;height:64px;margin:0 auto 12px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand-soft),#e0f2fe);color:var(--brand);animation:float 4s ease-in-out infinite}
+.empty .art svg{width:30px;height:30px}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+.skel{border-radius:12px;background:linear-gradient(90deg,#eef2f7 25%,#f8fafc 37%,#eef2f7 63%);background-size:400% 100%;animation:shimmer 1.3s ease infinite}
+
+/* impact */
+.big-num{font-size:clamp(28px,4vw,40px);font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.hbar{display:grid;grid-template-columns:minmax(0,150px) minmax(0,1fr) 90px;gap:12px;align-items:center;padding:7px 0;font-size:13px}
+.hbar .track{height:12px;border-radius:99px;background:#eef2f7;overflow:hidden}
+.hbar .track i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--brand),var(--brand-2));transition:width 1s var(--ease)}
+.hbar .val{text-align:right;font-weight:600}
+.method{margin-top:16px;padding:12px 14px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);font-size:12.5px;color:var(--ink-2)}
+
+/* lab */
+.sim-note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px;margin-bottom:16px}
+.player{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.sim-clock{font-size:26px;font-weight:800;letter-spacing:-.02em;min-width:84px}
+input[type=range]{accent-color:var(--brand);flex:1;min-width:140px}
+.pane-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
+.pane-stats div{padding:10px 12px;border-radius:12px;background:var(--surface-2)}
+.pane-stats b{display:block;font-size:22px;font-weight:800;letter-spacing:-.02em}
+.pane-stats small{color:var(--mute);font-size:12px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(30px,1fr));gap:5px}
+.tile{aspect-ratio:1;border-radius:7px;background:var(--c);display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700;transition:background .5s,transform .3s var(--ease);position:relative}
+.tile.x{box-shadow:0 0 0 2px #fff,0 0 0 4px var(--bad)}
+.tile.none{background:#eef2f7;color:transparent}
+.feed{margin-top:12px;max-height:210px;overflow:auto;font-size:12.5px;border-top:1px solid var(--line);padding-top:8px}
+.feed .item{display:flex;gap:10px;padding:5px 2px;min-width:0}
+.feed .item time{color:var(--mute);flex:none;font-variant-numeric:tabular-nums}
+.feed .item span{overflow-wrap:anywhere;min-width:0}
+.table-wrap{overflow-x:auto;border-radius:12px;border:1px solid var(--line);margin-top:12px}
+table{border-collapse:collapse;width:100%;font-size:13px;background:var(--surface)}
+th,td{padding:10px 12px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:inherit}
+thead th{background:var(--surface-2);font-size:12px;color:var(--ink-2);font-weight:700}
+tbody tr{transition:background .2s} tbody tr:hover{background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:0}
+td.best{color:var(--brand);font-weight:700}
+td small{color:var(--mute);font-weight:400}
+
+/* toasts */
+.toasts{position:fixed;right:18px;bottom:18px;z-index:3000;display:flex;flex-direction:column;gap:10px;max-width:min(380px,calc(100vw - 36px))}
+.toast{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:#0f172a;color:#fff;box-shadow:0 18px 40px -12px rgba(15,23,42,.45);font-size:13.5px;animation:toastIn .45s var(--ease) both}
+.toast.out{animation:toastOut .35s var(--ease) both}
+.toast .ic{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--ok);font-size:12px;font-weight:800}
+.toast.err .ic{background:var(--bad)} .toast.info .ic{background:var(--brand-2)}
+
+/* list animation */
+.enter{animation:up .5s var(--ease) both;animation-delay:calc(min(var(--i,0),8) * 45ms)}
+.leaving{animation:out .32s var(--ease) both;pointer-events:none}
+.flash{animation:flash 1.2s var(--ease)}
+
+@keyframes up{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes out{to{opacity:0;transform:translateX(18px) scale(.98)}}
+@keyframes viewIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes pop{0%{transform:scale(.8);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.55)}70%{box-shadow:0 0 0 8px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
+@keyframes pinPulse{0%{box-shadow:0 0 0 0 rgba(239,68,68,.6),0 2px 6px rgba(15,23,42,.35)}70%{box-shadow:0 0 0 14px rgba(239,68,68,0),0 2px 6px rgba(15,23,42,.35)}100%{box-shadow:0 0 0 0 rgba(239,68,68,0),0 2px 6px rgba(15,23,42,.35)}}
+@keyframes pulseRing{0%,100%{box-shadow:0 0 0 4px color-mix(in srgb,var(--brand) 20%,transparent)}50%{box-shadow:0 0 0 8px color-mix(in srgb,var(--brand) 6%,transparent)}}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.0),var(--sh-1)}50%{box-shadow:0 0 0 5px rgba(239,68,68,.12),var(--sh-1)}}
+@keyframes flash{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--brand) 45%,transparent)}100%{box-shadow:0 0 0 14px transparent}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes shimmer{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+@keyframes sheen{0%,60%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+@keyframes toastIn{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes toastOut{to{opacity:0;transform:translateX(24px)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;animation-delay:0s!important;transition-duration:.01ms!important}}
+@media (max-width:560px){.top-in{padding:10px 14px}.tabs{padding:0 10px}main{padding:16px 14px 50px}.card{padding:14px}.hbar{grid-template-columns:minmax(0,90px) minmax(0,1fr) 70px}.metrics{gap:12px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="logo">
+      <span class="logo-mark"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:#fff"><path d="M4 17c4 0 5-10 9-10h7"/><path d="M16 3l4 4-4 4"/><circle cx="5" cy="17" r="2"/></svg></span>
+      <span>Relay<small>Rescue surplus food before the clock runs out</small></span>
+    </div>
+    <div class="pills">
+      <span class="pill-policy" title="The dispatch policy deciding who gets asked and when">Dispatch <b id="policy">…</b></span>
+      <span class="pill-live" id="live"><span class="live-dot"></span><span id="clock" class="num">connecting…</span></span>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist"><span class="tab-ink" id="ink"></span></nav>
+</header>
+
+<main>
+  <!-- LIVE BOARD -->
+  <section class="view" id="v-board">
+    <div class="view-head"><div><h1>Live board</h1><p>Every rescue in the city, ordered by how soon it needs attention. Red cards need a human now.</p></div></div>
+    <div class="kpis">
+      <div class="card kpi"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><div class="v num" id="k-active">0</div><div class="l">Active rescues</div></div>
+      <div class="card kpi" id="k-human-card"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div><div class="v num" id="k-human">0</div><div class="l">Need a human</div></div>
+      <div class="card kpi"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/></svg></div><div class="v num" id="k-kg">0</div><div class="l">kg delivered</div></div>
+      <div class="card kpi"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M3 11h18M5 11a7 7 0 0 0 14 0M12 4v3"/></svg></div><div class="v num" id="k-meals">0</div><div class="l">Meals served</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card map-card">
+        <div id="map" class="map"></div>
+        <div class="map-foot">
+          <span class="legend"><i style="--c:var(--offered)"></i>Finding volunteer</span>
+          <span class="legend"><i style="--c:var(--claimed)"></i>Volunteer on the way</span>
+          <span class="legend"><i style="--c:var(--picked_up)"></i>Picked up</span>
+          <span class="legend"><i style="--c:var(--delivered)"></i>Delivered</span>
+          <span class="legend"><i style="--c:var(--expired)"></i>Needs a human</span>
+          <span class="legend"><i style="--c:#cbd5e1"></i>Volunteer</span>
+        </div>
+      </div>
+      <div>
+        <div class="col-head"><h2>Rescues by urgency</h2><span class="tiny mute" id="q-count"></span></div>
+        <div class="queue" id="queue"></div>
+        <div class="card" style="margin-top:14px">
+          <details class="why" style="margin:0;border:0;padding:0" id="closed-box"><summary>Recently closed <span class="mute" id="closed-n"></span></summary><div id="closed" style="margin-top:6px"></div></details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DONATE -->
+  <section class="view" id="v-donate">
+    <div class="view-head"><div><h1>Donate surplus food</h1><p>Paste the message you'd send on WhatsApp. Relay reads it, you check it, and a shelter and volunteer are lined up in seconds.</p></div></div>
+    <div class="grid-2">
+      <div class="stack">
+        <div class="card">
+          <h2><span class="step">1</span>Tell us what you have</h2>
+          <textarea class="input" id="d-text" style="margin-top:14px" placeholder="e.g. 30 plates veg biryani + 40 rotis, kept hot, we close 11"></textarea>
+          <div class="examples">
+            <button class="chip" data-act="example" data-text="30 plates veg biryani + 40 rotis, kept hot, we close 11">🍛 Biryani, hot</button>
+            <button class="chip" data-act="example" data-text="12 loaves of bread and 20 buns, available till 10 pm">🥖 Bakery</button>
+            <button class="chip" data-act="example" data-text="about 20 kg vegetables and fruits, pick up by 9 pm">🥕 Fruit &amp; veg</button>
+          </div>
+          <div class="row between wrap" style="margin-top:14px">
+            <span id="d-parsed"></span>
+            <button class="btn" data-act="parse"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></svg>Read message</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2><span class="step">2</span>Check &amp; post</h2>
+          <div class="form" style="margin-top:14px">
+            <label class="field"><span>Your name / venue</span><input class="input" id="f-donor" value="Hotel Saffron" maxlength="80"></label>
+            <label class="field"><span>Food type</span><select class="input" id="f-category"></select></label>
+            <label class="field"><span>Kept</span><select class="input" id="f-holding"><option value="unknown">Not sure</option><option value="hot">Hot</option><option value="cold">Chilled</option><option value="ambient">Room temperature</option></select></label>
+            <label class="field"><span>Vegetarian?</span><select class="input" id="f-veg"><option value="">Not sure</option><option value="true">Yes, veg</option><option value="false">No, non-veg</option></select></label>
+            <label class="field"><span>Weight (kg)</span><input class="input num" id="f-kg" type="number" min="0.1" max="200" step="0.1" placeholder="e.g. 12"></label>
+            <label class="field"><span>Plates (optional)</span><input class="input num" id="f-plates" type="number" min="1" max="2000" placeholder="e.g. 30"></label>
+            <label class="field"><span>Available until</span><input class="input num" id="f-until" type="time"></label>
+            <label class="field" id="f-label-w" hidden><span>Label use-by</span><input class="input" id="f-label" type="datetime-local"></label>
+          </div>
+          <div class="field" style="margin-top:14px"><span>Pickup location <span class="hint">(click the map or drag the pin)</span></span><div id="pickmap" class="pickmap"></div></div>
+          <div class="row between wrap" style="margin-top:14px">
+            <span class="hint num" id="f-loc"></span>
+            <div class="row"><button class="btn ghost sm" data-act="geo">Use my location</button><button class="btn" data-act="post">Post donation</button></div>
+          </div>
+          <p class="hint" style="margin-top:12px">🛡️ The food-safety clock starts when you post and follows fixed rules, never a model. If you're unsure how it was kept, we assume the shortest safe time.</p>
+        </div>
+      </div>
+      <div>
+        <div class="col-head"><h2>Your donations</h2></div>
+        <div id="mine"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- VOLUNTEER -->
+  <section class="view" id="v-volunteer">
+    <div class="view-head"><div><h1>Volunteer</h1><p>Offers arrive only when you're a good fit. The exact address is shown after you accept.</p></div></div>
+    <div class="card">
+      <div class="row wrap" style="gap:14px">
+        <label class="field" style="min-width:240px;flex:1;max-width:380px"><span>I'm volunteering as</span><select class="input" id="v-sel"></select></label>
+        <div class="grow"><div class="tiny mute" style="margin-bottom:6px;font-weight:600">Has something right now</div><div class="chips" id="v-quick"></div></div>
+      </div>
+      <div class="tiny mute" id="v-info" style="margin-top:10px"></div>
+    </div>
+    <div id="v-job" style="margin-top:14px"></div>
+    <div class="col-head" style="margin-top:18px"><h2>Offers for you</h2></div>
+    <div class="queue" id="v-offers"></div>
+  </section>
+
+  <!-- SHELTER -->
+  <section class="view" id="v-shelter">
+    <div class="view-head"><div><h1>Shelter</h1><p>Tell Relay how much you can take tonight. Give the 4-digit code to the volunteer at handover.</p></div></div>
+    <div class="card">
+      <div class="row wrap" style="gap:14px">
+        <label class="field" style="min-width:240px;flex:1;max-width:380px"><span>Site</span><select class="input" id="r-sel"></select></label>
+        <div class="grow"><div class="tiny mute" style="margin-bottom:6px;font-weight:600">Expecting food</div><div class="chips" id="r-quick"></div></div>
+      </div>
+      <div class="chips" id="r-tags" style="margin-top:12px"></div>
+    </div>
+    <div class="grid-2e" style="margin-top:14px">
+      <div class="card"><h2>Tonight's free space</h2><div id="r-cap" style="margin-top:14px"></div></div>
+      <div><div class="col-head"><h2>On the way to you</h2></div><div class="queue" id="r-arr"></div><div id="r-held" style="margin-top:10px"></div></div>
+    </div>
+  </section>
+
+  <!-- IMPACT -->
+  <section class="view" id="v-impact">
+    <div class="view-head"><div><h1>Impact</h1><p>Counted only when the shelter confirms the handover code, so the numbers are safe to report.</p></div>
+      <a class="btn ghost" href="/api/impact.csv" download><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download CSV</a></div>
+    <div class="kpis" id="i-kpis"></div>
+    <div class="grid-2e">
+      <div class="card"><h2>Delivered by shelter</h2><div id="i-rec" style="margin-top:10px"></div></div>
+      <div class="card"><h2>Rescue rate by area</h2><div id="i-zone" style="margin-top:10px"></div></div>
+    </div>
+    <div class="method" id="i-method"></div>
+  </section>
+
+  <!-- LAB -->
+  <section class="view" id="v-lab">
+    <div class="view-head"><div><h1>Simulation lab</h1><p>Same night, same food, same volunteers: only the dispatch policy changes.</p></div></div>
+    <div class="sim-note"><span>⚗️</span><span id="lab-note">Simulated, not a real-world result. <b>Bengaluru</b> replays held-out nights from relay_data (episodes 255–299) with the real volunteers and shelters; no model was trained on them.</span></div>
+    <div class="card">
+      <div class="row wrap" style="gap:14px;align-items:flex-end">
+        <label class="field" style="min-width:230px"><span>Scenario</span><select class="input" id="scen"></select></label>
+        <label class="field" style="width:120px"><span>Night #</span><input class="input num" id="seed" type="number" value="0" min="0" max="999"></label>
+        <button class="btn" data-act="demo"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M6 4l14 8-14 8z"/></svg>Replay one night</button>
+        <button class="btn ghost" data-act="compare"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>Compare 30 nights</button>
+      </div>
+    </div>
+    <div id="lab-player" style="margin-top:16px"></div>
+    <div id="lab-table" style="margin-top:16px"></div>
+  </section>
+</main>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- basics
+if (!window.L) {   // Leaflet is from a CDN: with no internet, stub it so everything but the maps still works
+  const noop = new Proxy(function () {}, {get: (t, k) => k === "_fitted" ? true : noop, apply: () => noop});
+  window.L = noop; window.MAP_OFFLINE = true;
+}
+const $ = (s, r = document) => r.querySelector(s);
+const h = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const kgf = x => String(Math.round(x * 10) / 10);
+const OPEN = ["posted", "offered"];
+const HEX = {posted: "#94a3b8", offered: "#3b82f6", claimed: "#f59e0b", picked_up: "#8b5cf6", delivered: "#10b981", expired: "#ef4444", diverted: "#b45309"};
+const ACTIVE = ["posted", "offered", "claimed", "picked_up"];
+const CAT = {cooked: "Cooked meal", dairy: "Dairy / chilled", bakery: "Bakery", produce: "Fruit & veg", packaged: "Packaged", mixed: "Mixed", unknown: "Not sure"};
+const STATUS = {posted: "Posted", offered: "Finding volunteer", claimed: "Volunteer on the way", picked_up: "Picked up", delivered: "Delivered", expired: "Lost", diverted: "Diverted"};
+const TILE = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";   // CARTO Positron; key from /api/config (.env)
+let CARTO_KEY = "";
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const ICON = {
+  check: '<svg class="i" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>',
+  x: '<svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  home: '<svg class="i" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>',
+  box: '<svg class="i" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>',
+  bike: '<svg class="i" viewBox="0 0 24 24"><circle cx="6" cy="17" r="3"/><circle cx="18" cy="17" r="3"/><path d="M6 17l4-8h5l3 8M10 9 8 5H6"/></svg>',
+  bell: '<svg class="i" viewBox="0 0 24 24"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 21h4"/></svg>',
+};
+const TABS = [
+  ["board", "Live board", '<path d="M3 12h4l3-8 4 16 3-8h4"/>'],
+  ["donate", "Donate food", '<path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>'],
+  ["volunteer", "Volunteer", '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'],
+  ["shelter", "Shelter", '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>'],
+  ["impact", "Impact", '<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>'],
+  ["lab", "Simulation lab", '<path d="M9 3h6M10 3v6L4 19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2L14 9V3"/>'],
+];
+const OLD = {console: "board", donor: "donate", recipient: "shelter", compare: "lab"};
+let S = null, tab = "board", online = true;
+
+async function api(path, opt = {}) {
+  const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opt});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = j.detail;
+    throw new Error(typeof d === "string" ? d : Array.isArray(d) ? d.map(e => `${(e.loc || []).slice(-1)[0]}: ${e.msg}`).join("; ") : `request failed (${r.status})`);
+  }
+  return j;
+}
+const store = {get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch (e) { return d; } },
+               set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }};
+
+// time
+const liveNow = () => S ? (Date.now() / 1000 - S.base) / 60 : 0;
+const clock = t => { const d = new Date((S.base + t * 60) * 1000); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const simClock = t => `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+function dur(m) {
+  if (m == null || !isFinite(m)) return "–";
+  if (m <= 0) return "now";
+  if (m >= 1440) return `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
+  if (m >= 60) return `${Math.floor(m / 60)}h ${String(Math.floor(m % 60)).padStart(2, "0")}m`;
+  return `${Math.max(1, Math.round(m))} min`;
+}
+const initials = n => String(n || "?").replace(/\(.*\)/, "").trim().split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+const vname = id => id === "backup" ? "Backup courier" : (S.volunteers.find(v => v.id === id)?.name || id);
+
+// ---------------------------------------------------------------- DOM patching (no flicker, animations stay smooth)
+function morph(a, b) {
+  if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName || (a.nodeType === 1 && a.getAttribute("data-k") !== b.getAttribute("data-k"))) {
+    a.replaceWith(b.cloneNode(true)); return;
+  }
+  if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+  for (const at of [...a.attributes]) if (!b.hasAttribute(at.name) && at.name !== "open") a.removeAttribute(at.name);
+  for (const at of [...b.attributes]) if (a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName)) return;   // keep what the user typed
+  morphKids(a, b);
+}
+function morphKids(a, b) {
+  const ak = [...a.childNodes], bk = [...b.childNodes];
+  bk.forEach((n, i) => i < ak.length ? morph(ak[i], n) : a.appendChild(n.cloneNode(true)));
+  for (let i = bk.length; i < ak.length; i++) ak[i].remove();
+}
+function setHTML(el, html) {
+  if (el._h === html) return;
+  el._h = html;
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  morphKids(el, t.content);
+}
+// keyed list: new items animate in, gone items animate out, existing items are patched in place
+function list(el, items, key, render, empty) {
+  const seen = new Set();
+  let prev = null;
+  items.forEach((it, i) => {
+    const k = String(key(it));
+    seen.add(k);
+    let node = [...el.children].find(c => c.dataset.key === k && !c.classList.contains("leaving"));
+    if (!node) {
+      node = document.createElement("div");
+      node.className = "item enter";
+      node.dataset.key = k;
+      node.style.setProperty("--i", i);
+      node.addEventListener("animationend", () => node.classList.remove("enter"), {once: true});
+    }
+    setHTML(node, render(it));
+    const want = prev ? prev.nextSibling : el.firstChild;
+    if (node !== want) el.insertBefore(node, want);
+    prev = node;
+  });
+  for (const c of [...el.children]) {
+    if (c.dataset.key && !seen.has(c.dataset.key) && !c.classList.contains("leaving")) {
+      c.classList.add("leaving");
+      c.addEventListener("animationend", () => c.remove(), {once: true});
+      setTimeout(() => c.remove(), 500);
+    }
+    if (!c.dataset.key && items.length) c.remove();   // an old empty state
+  }
+  if (!items.length && empty && !el.querySelector(".empty-wrap")) {
+    const e = document.createElement("div");
+    e.className = "empty-wrap enter";
+    e.innerHTML = empty;
+    el.appendChild(e);
+  }
+}
+const emptyCard = (title, text, icon = ICON.box) => `<div class="card empty"><div class="art">${icon}</div><b>${h(title)}</b><span class="small">${h(text)}</span></div>`;
+
+function countTo(el, to, fmt = v => Math.round(v).toLocaleString()) {
+  const from = el._v ?? 0;
+  el._v = to;
+  if (from === to) { el.textContent = fmt(to); return; }
+  const t0 = performance.now(), D = 900;
+  const step = now => {
+    const p = clamp((now - t0) / D, 0, 1), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(from + (to - from) * e);
+    if (p < 1 && el._v === to) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+function toast(msg, kind = "ok") {
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.innerHTML = `<span class="ic">${kind === "err" ? "!" : kind === "info" ? "i" : "✓"}</span><span>${h(msg)}</span>`;
+  $("#toasts").appendChild(el);
+  setTimeout(() => { el.classList.add("out"); el.addEventListener("animationend", () => el.remove(), {once: true}); }, kind === "err" ? 5200 : 3400);
+}
+async function busy(btn, fn) {
+  if (btn) btn.setAttribute("aria-busy", "true");
+  try { return await fn(); } catch (e) { toast(e.message, "err"); } finally { if (btn) btn.removeAttribute("aria-busy"); }
+}
+
+// ---------------------------------------------------------------- tabs
+$("#tabs").insertAdjacentHTML("beforeend", TABS.map(([id, name, ic]) =>
+  `<button class="tab" role="tab" data-act="tab" data-tab="${id}" id="t-${id}"><svg class="i" viewBox="0 0 24 24">${ic}</svg>${name}</button>`).join(""));
+function moveInk() {
+  const b = $(`#t-${tab}`);
+  if (b) { $("#ink").style.left = b.offsetLeft + 10 + "px"; $("#ink").style.width = b.offsetWidth - 20 + "px"; }
+}
+function show(id, push = true) {
+  id = OLD[id] || id;
+  if (!TABS.some(t => t[0] === id)) id = "board";
+  tab = id;
+  for (const [t] of TABS) {
+    $(`#v-${t}`).classList.toggle("on", t === id);
+    $(`#t-${t}`).classList.toggle("on", t === id);
+    $(`#t-${t}`).setAttribute("aria-selected", t === id);
+  }
+  moveInk();
+  $(`#t-${id}`).scrollIntoView({block: "nearest", inline: "nearest"});
+  if (push) history.replaceState(null, "", "#" + id);
+  if (id === "board") setTimeout(() => MAP.main.invalidateSize(), 60);
+  if (id === "donate") setTimeout(initPick, 60);
+  renderTab();
+}
+window.addEventListener("resize", moveInk);
+document.fonts?.ready.then(moveInk);
+
+// ---------------------------------------------------------------- maps
+const MAP = {main: null, pins: new Map(), fitted: false, pick: null, pickPin: null};
+function baseMap(elId, center, zoom) {
+  if (window.MAP_OFFLINE) { $("#" + elId).innerHTML = '<div class="map-off">🗺️ Map needs internet.<br>Everything else works.</div>'; }
+  const m = L.map(elId, {zoomControl: true, scrollWheelZoom: true}).setView(center, zoom);
+  L.tileLayer(TILE + (CARTO_KEY ? "?key=" + encodeURIComponent(CARTO_KEY) : ""), {attribution: TILE_ATTR, subdomains: "abcd", maxZoom: 19}).addTo(m);
+  return m;
+}
+function pinIcon(cls, color) { return L.divIcon({className: "", html: `<span class="pin ${cls}" style="--c:${color}"></span>`, iconSize: [18, 18], iconAnchor: [9, 9]}); }
+function upsert(key, make, update) {
+  let m = MAP.pins.get(key);
+  if (!m) { m = make(); m.addTo(MAP.main); MAP.pins.set(key, m); } else update(m);
+  m._seen = true;
+}
+function renderMap() {
+  if (!MAP.main) return;
+  for (const m of MAP.pins.values()) m._seen = false;
+  const rec = Object.fromEntries(S.recipients.map(r => [r.id, r]));
+  for (const r of S.recipients) {
+    const full = r.full.length > 0, tip = `<b>${h(r.name)}</b>${full ? `<br>full for ${h(r.full.join(", "))}` : ""}`;
+    upsert("r:" + r.id, () => {
+      const m = L.marker(r.loc, {icon: L.divIcon({className: "", html: `<span class="house ${full ? "full" : ""}">${ICON.home}</span>`, iconSize: [26, 26], iconAnchor: [13, 13]}), zIndexOffset: 200}).bindTooltip(tip);
+      m._full = full; return m;
+    }, m => { if (m._full !== full) { m.setIcon(L.divIcon({className: "", html: `<span class="house ${full ? "full" : ""}">${ICON.home}</span>`, iconSize: [26, 26], iconAnchor: [13, 13]})); m._full = full; } m.setTooltipContent(tip); });
+  }
+  for (const v of S.volunteers) {
+    const c = v.busy ? "#f59e0b" : "#cbd5e1";
+    upsert("v:" + v.id, () => { const m = L.circleMarker(v.loc, {radius: 4, color: "#fff", weight: 1, fillColor: c, fillOpacity: .95}).bindTooltip(h(v.name)); m._c = c; return m; },
+      m => { m.setLatLng(v.loc); if (m._c !== c) { m.setStyle({fillColor: c}); m._c = c; } });
+  }
+  for (const d of S.donations) {
+    const escd = d.escalated && OPEN.includes(d.status), done = !ACTIVE.includes(d.status);
+    const cls = (escd ? "esc " : "") + (done ? "done" : ""), color = escd ? "var(--expired)" : `var(--${d.status})`;
+    const tip = `<b>${h(d.donor)}</b><br>${kgf(d.kg)} kg · ${h(STATUS[d.status])}`;
+    upsert("d:" + d.id, () => { const m = L.marker(d.loc, {icon: pinIcon(cls, color), zIndexOffset: done ? 0 : 500}).bindTooltip(tip); m._k = cls + color; return m; },
+      m => { if (m._k !== cls + color) { m.setIcon(pinIcon(cls, color)); m._k = cls + color; m.setZIndexOffset(done ? 0 : 500); } m.setTooltipContent(tip); });
+    const r = rec[d.recipient];
+    if (r && ACTIVE.includes(d.status)) {
+      const st = {color: HEX[d.status], weight: 3, opacity: .8, dashArray: OPEN.includes(d.status) ? "6 8" : null};
+      const key = "l:" + d.id + ":" + d.status;
+      upsert(key, () => { const m = L.polyline([d.loc, r.loc], st); m._r = r.id; return m; },
+        m => { if (m._r !== r.id) { m.setLatLngs([d.loc, r.loc]); m._r = r.id; } });
+    }
+  }
+  for (const [k, m] of MAP.pins) if (!m._seen) { m.remove(); MAP.pins.delete(k); }
+  if (!MAP.fitted && S.recipients.length && tab === "board") {   // fit only once the map is visible and sized
+    MAP.main.invalidateSize();
+    const sz = MAP.main.getSize();
+    if (sz.x > 50 && sz.y > 50) { MAP.main.fitBounds(S.recipients.map(r => r.loc), {padding: [36, 36]}); MAP.fitted = true; }
+  }
+}
+function initPick() {
+  if (MAP.pick || !S) { MAP.pick?.invalidateSize(); return; }
+  const c = centre();
+  MAP.pick = baseMap("pickmap", c, 13);
+  MAP.pickPin = L.marker(c, {draggable: true}).addTo(MAP.pick);
+  MAP.pickPin.on("dragend", () => setLoc(MAP.pickPin.getLatLng()));
+  MAP.pick.on("click", e => setLoc(e.latlng));
+  setLoc({lat: c[0] + (Math.random() - .5) * .03, lng: c[1] + (Math.random() - .5) * .03});
+}
+const centre = () => { const n = S.recipients.length || 1; return [S.recipients.reduce((a, r) => a + r.loc[0], 0) / n, S.recipients.reduce((a, r) => a + r.loc[1], 0) / n]; };
+let pickLoc = null;
+function setLoc(ll) {
+  pickLoc = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
+  MAP.pickPin?.setLatLng(pickLoc);
+  $("#f-loc").textContent = `📍 ${pickLoc[0].toFixed(4)}, ${pickLoc[1].toFixed(4)}`;
+}
+
+// ---------------------------------------------------------------- live board
+function status(st) { return `<span class="status" style="--c:var(--${st})">${h(STATUS[st] || st)}</span>`; }
+function ring(p) {
+  const tone = p >= .8 ? "ok" : p >= .5 ? "warn" : "bad";
+  return `<div class="ring ${tone}" title="Chance a volunteer claims it before a human is needed"><div class="g"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" class="track"/><circle cx="22" cy="22" r="18" class="val" style="stroke-dashoffset:${(113.1 * (1 - clamp(p, 0, 1))).toFixed(1)}"/></svg><span class="num">${Math.round(p * 100)}%</span></div><small>claim odds</small></div>`;
+}
+const whyOpen = new Set((() => { try { return JSON.parse(sessionStorage.getItem("whyOpen") || "[]"); } catch (e) { return []; } })());
+function rescueCard(d) {
+  const t = liveNow(), age = t - S.now, open = OPEN.includes(d.status), escd = d.escalated && open;
+  const left = d.safe_until - t, frac = clamp(left / Math.max(1, d.safe_until - d.posted), 0, 1);
+  const tone = frac > .5 ? "ok" : frac > .25 ? "warn" : "bad";
+  const slack = d.slack == null ? null : d.slack - age;
+  const veg = d.veg === true ? "veg" : d.veg === false ? "non-veg" : "veg unknown";
+  const offered = S.offers.filter(o => o.d === d.id && o.status === "sent");
+  let who = "";
+  if (d.volunteer) who = `<div class="note-line row wrap"><span>${ICON.bike.replace('class="i"', 'class="i" width="16" height="16"')}</span><span><b>${h(vname(d.volunteer))}</b> ${d.status === "picked_up" ? "has the food" : `is on the way · pickup ~${clock(d.eta_pick)}`}</span>${d.volunteer !== "backup" ? `<button class="chip" data-act="open-vol" data-v="${h(d.volunteer)}">Open their view →</button>` : ""}</div>`;
+  else if (offered.length) who = `<div class="note-line"><div class="tiny mute" style="margin-bottom:6px">Asked ${offered.length} volunteer${offered.length > 1 ? "s" : ""} · tap to act as them</div><div class="chips">${offered.slice(0, 6).map(o => `<button class="chip" data-act="open-vol" data-v="${h(o.v)}"><span class="av">${h(initials(vname(o.v)))}</span><span class="clip">${h(vname(o.v))}</span></button>`).join("")}</div></div>`;
+  const why = d.why ? `<details class="why" data-why="${h(d.id)}" ${whyOpen.has(d.id) ? "open" : ""}><summary>Why this shelter?</summary><ul>${Object.entries(d.why).map(([n, w]) =>
+    `<li class="${w === "chosen" ? "good" : ""}"><b>${w === "chosen" ? "✓" : w.startsWith("feasible") ? "·" : "✕"} ${h(n)}</b><span>${h(w === "chosen" ? "chosen: best fit right now" : w)}</span></li>`).join("")}</ul></details>` : "";
+  return `<article class="card rescue lift ${escd ? "is-esc" : ""}">
+    <div class="row between"><div class="title"><span class="dot" style="--c:var(--${escd ? "expired" : d.status})"></span><b class="clip">${h(d.donor)}</b></div>${status(d.status)}</div>
+    <p class="sub">${kgf(d.kg)} kg · ${h(CAT[d.category] || d.category)} · ${veg} · ~${Math.round(d.meals)} meals → <b>${h(d.recipient_name || "finding a shelter…")}</b></p>
+    <div class="metrics">
+      <div class="meter"><div class="row between small"><span class="mute">Safe to eat for</span><b class="num">${dur(left)}</b></div><div class="bar"><i class="${tone}" style="width:${(frac * 100).toFixed(1)}%"></i></div><div class="tiny mute">until ${clock(d.safe_until)}${open && d.L != null ? ` · human needed by <b>${clock(d.L)}</b>` : ""}</div></div>
+      ${open && d.pclaim != null ? ring(d.pclaim) : ""}
+    </div>
+    ${open && slack != null ? `<p class="tiny mute" style="margin-top:12px">Latest pickup in <b class="num">${dur(slack)}</b> · ${d.eligible} volunteers could still make it</p>` : ""}
+    ${who}
+    ${escd ? `<div class="alert-strip"><span>${ICON.bell.replace('class="i"', 'class="i" width="16" height="16"')} Needs a human: act before <b>${d.L != null ? clock(d.L) : "soon"}</b></span><button class="btn danger sm" data-act="backup" data-d="${h(d.id)}">Send backup courier</button></div>` : ""}
+    ${why}
+  </article>`;
+}
+function renderBoard() {
+  const ds = S.donations, t = liveNow();
+  const active = ds.filter(d => ACTIVE.includes(d.status));
+  const human = active.filter(d => d.escalated && OPEN.includes(d.status));
+  const done = ds.filter(d => d.status === "delivered");
+  countTo($("#k-active"), active.length);
+  countTo($("#k-human"), human.length);
+  $("#k-human-card").classList.toggle("alert", human.length > 0);
+  countTo($("#k-kg"), done.reduce((a, d) => a + d.kg, 0), v => kgf(v));
+  countTo($("#k-meals"), done.reduce((a, d) => a + d.meals, 0));
+  const rank = d => (d.escalated && OPEN.includes(d.status) ? 0 : OPEN.includes(d.status) ? 1 : 2);
+  active.sort((a, b) => rank(a) - rank(b) || (a.slack ?? 1e9) - (b.slack ?? 1e9) || a.safe_until - b.safe_until);
+  $("#q-count").textContent = active.length ? `${active.length} active` : "";
+  list($("#queue"), active, d => d.id, rescueCard, emptyCard("All quiet", "No active rescues. Post one from the Donate tab to see Relay work.", ICON.check));
+  const closed = ds.filter(d => !ACTIVE.includes(d.status)).sort((a, b) => (b.t_drop ?? b.posted) - (a.t_drop ?? a.posted));
+  $("#closed-n").textContent = closed.length ? `(${closed.length})` : "";
+  list($("#closed"), closed.slice(0, 30), d => d.id, d =>
+    `<div class="closed-row"><span class="dot" style="--c:var(--${d.status})"></span><b class="clip grow">${h(d.donor)}</b><span class="num mute">${kgf(d.kg)} kg</span>${status(d.status)}</div>`,
+    '<div class="tiny mute" style="padding:8px 4px">Nothing closed yet.</div>');
+  renderMap();
+}
+document.addEventListener("toggle", e => {
+  const id = e.target.dataset?.why;
+  if (!id) return;
+  e.target.open ? whyOpen.add(id) : whyOpen.delete(id);
+  try { sessionStorage.setItem("whyOpen", JSON.stringify([...whyOpen])); } catch (err) {}
+}, true);
+
+// ---------------------------------------------------------------- donate
+$("#f-category").innerHTML = Object.entries(CAT).map(([k, v]) => `<option value="${k}">${h(v)}</option>`).join("");
+$("#f-category").addEventListener("change", () => { $("#f-label-w").hidden = $("#f-category").value !== "packaged"; });
+let mine = store.get("relay_mine2", []);
+async function parseText(btn) {
+  const text = $("#d-text").value.trim();
+  if (!text) { toast("Type or paste what you have first", "info"); $("#d-text").focus(); return; }
+  await busy(btn, async () => {
+    const x = await api("/api/intake/parse", {method: "POST", body: JSON.stringify({text})});
+    $("#f-category").value = x.category; $("#f-holding").value = x.holding;
+    $("#f-veg").value = x.veg == null ? "" : String(x.veg);
+    $("#f-kg").value = x.kg ?? ""; $("#f-plates").value = x.plates ?? ""; $("#f-until").value = x.ready_until ?? "";
+    $("#f-label-w").hidden = x.category !== "packaged";
+    for (const id of ["#f-category", "#f-holding", "#f-veg", "#f-kg", "#f-plates", "#f-until"]) { const el = $(id); el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); }
+    $("#d-parsed").innerHTML = `<span class="parsed">✓ Understood (${x.source === "regex" ? "rules" : "AI + rules"}). Please check below.</span>`;
+    if (x.warnings?.length) toast(x.warnings.join("; "), "info");
+    if (!x.kg) toast("Couldn't find a weight. Please add kg.", "info");
+  });
+}
+async function postDonation(btn) {
+  const kg = +$("#f-kg").value;
+  if (!(kg > 0)) { toast("Please enter the weight in kg", "info"); $("#f-kg").focus(); return; }
+  if (!pickLoc) { toast("Pick the pickup location on the map", "info"); return; }
+  const veg = $("#f-veg").value, lab = $("#f-label").value, cat = $("#f-category").value;
+  const body = {donor: $("#f-donor").value.trim() || "Anonymous donor", category: cat, holding: $("#f-holding").value,
+    veg: veg === "" ? null : veg === "true", kg, plates: $("#f-plates").value ? +$("#f-plates").value : null,
+    ready_until: $("#f-until").value || null, lat: pickLoc[0], lon: pickLoc[1], text: $("#d-text").value,
+    label_until: cat === "packaged" && lab ? (new Date(lab).getTime() / 1000 - S.base) / 60 : null};
+  await busy(btn, async () => {
+    const d = await api("/api/donations", {method: "POST", body: JSON.stringify(body)});
+    mine = [{id: d.id, posted: d.posted}, ...mine.filter(m => m.id !== d.id)].slice(0, 20);
+    store.set("relay_mine2", mine);
+    toast(d.recipient_name ? `Posted. Heading to ${d.recipient_name}; asking volunteers now.` : "Posted. Finding a shelter…");
+    await refresh();
+  });
+}
+function mineCard(d) {
+  const failed = d.status === "expired" || d.status === "diverted";
+  const steps = ["Posted", "Shelter found", "Volunteer coming", "Picked up", "Delivered"];
+  const r = failed ? (d.t_pick ? 3 : d.volunteer ? 2 : d.recipient ? 1 : 0)
+                   : {posted: d.recipient ? 1 : 0, offered: 1, claimed: 2, picked_up: 3, delivered: 4}[d.status];
+  const cls = i => i < r || (i === r && (failed || d.status === "delivered")) ? "done" : failed && i === r + 1 ? "fail" : i === r ? "cur" : "";
+  let msg;
+  if (d.status === "delivered") msg = `✅ Delivered to <b>${h(d.recipient_name)}</b> at ${clock(d.t_drop)} · ${kgf(d.kg)} kg · ~${Math.round(d.meals)} meals. Thank you!`;
+  else if (failed) msg = `We couldn't rescue this one (${h(d.end_reason || d.status)}). Please dispose of it safely. We're sorry.`;
+  else if (d.volunteer) msg = d.status === "picked_up" ? "On its way to the shelter." : `Someone is coming. Pickup around <b>${clock(d.eta_pick)}</b>.`;
+  else if (d.pclaim != null) msg = d.pclaim >= .8 ? `Asking volunteers. It will very likely be claimed (${Math.round(d.pclaim * 100)}%).` : `Volunteers are scarce right now (${Math.round(d.pclaim * 100)}%). Our coordinator has been alerted.`;
+  else msg = "Finding the right shelter…";
+  return `<article class="card lift">
+    <div class="row between"><b class="clip">${h(d.donor)} · ${kgf(d.kg)} kg ${h(CAT[d.category] || d.category)}</b>${status(d.status)}</div>
+    <div class="steps">${steps.map((s, i) => `<div class="s ${cls(i)}"><i>${cls(i) === "done" ? ICON.check : cls(i) === "fail" ? ICON.x : ""}</i><span>${s}</span></div>`).join("")}</div>
+    <p class="small" style="margin-top:10px">${msg}</p>
+    <p class="tiny mute" style="margin-top:6px">Safe to eat until ${clock(d.safe_until)}${d.recipient_name ? ` · going to ${h(d.recipient_name)}` : ""}</p>
+  </article>`;
+}
+function renderDonate() {
+  if (!MAP.pick) initPick();
+  const ds = mine.map(m => S.donations.find(d => d.id === m.id && Math.abs(d.posted - m.posted) < .01)).filter(Boolean);
+  list($("#mine"), ds, d => d.id, mineCard, emptyCard("Nothing posted yet", "Your donations and their live progress appear here."));
+}
+
+// ---------------------------------------------------------------- volunteer
+let volId = store.get("relay_vol", null);
+function fillVolSelect() {
+  const sel = $("#v-sel");
+  if (sel.options.length !== S.volunteers.length) {
+    sel.innerHTML = [...S.volunteers].sort((a, b) => a.name.localeCompare(b.name)).map(v => `<option value="${h(v.id)}">${h(v.name)} · ${h(v.zone)}</option>`).join("");
+  }
+  if (!volId || !S.volunteers.some(v => v.id === volId)) volId = S.offers.find(o => o.status === "sent")?.v || S.volunteers[0]?.id;
+  sel.value = volId;
+  const ids = [...new Set([...S.donations.filter(d => ["claimed", "picked_up"].includes(d.status) && d.volunteer !== "backup").map(d => d.volunteer),
+                         ...S.offers.filter(o => o.status === "sent").map(o => o.v)])].slice(0, 8);
+  setHTML($("#v-quick"), ids.length ? ids.map(id => `<button class="chip" data-act="open-vol" data-v="${h(id)}"><span class="av">${h(initials(vname(id)))}</span><span class="clip">${h(vname(id))}</span></button>`).join("")
+    : '<span class="tiny mute">No one has an offer right now. Post a donation first.</span>');
+}
+async function loadVol() {
+  if (!volId) return;
+  const x = await api(`/api/volunteers/${encodeURIComponent(volId)}`);
+  const v = x.volunteer;
+  $("#v-info").textContent = `${kgf(v.cap_kg)} kg vehicle · ${v.n7} offers this week · ${x.available ? "available" : "on a rescue"} · ${v.zone}`;
+  const j = x.job;
+  setHTML($("#v-job"), j ? `<article class="card" data-k="job-${h(j.d)}" style="border-color:color-mix(in srgb,var(--brand) 45%,var(--line));animation:up .5s var(--ease)">
+    <div class="row between"><h2>Your rescue: ${h(j.donor)}</h2>${status(j.status)}</div>
+    <div class="steps"><div class="s done"><i>${ICON.check}</i><span>Accepted</span></div><div class="s ${j.status === "picked_up" ? "done" : "cur"}"><i>${j.status === "picked_up" ? ICON.check : ""}</i><span>Picked up</span></div><div class="s ${j.status === "picked_up" ? "cur" : ""}"><i></i><span>Delivered</span></div></div>
+    <div class="grid-2e" style="margin-top:14px;gap:12px">
+      <div class="card" style="background:var(--surface-2);box-shadow:none;padding:12px"><div class="tiny mute">Pick up</div><b class="small">${kgf(j.kg)} kg ${h(CAT[j.category] || j.category)} by ${h(j.pickup_by)}</b><div class="tiny mute num">${j.pickup.map(a => a.toFixed(4)).join(", ")}</div></div>
+      <div class="card" style="background:var(--surface-2);box-shadow:none;padding:12px"><div class="tiny mute">Drop off</div><b class="small">${h(j.recipient)}</b><div class="tiny mute num">${j.dropoff ? j.dropoff.map(a => a.toFixed(4)).join(", ") : "address shared by the coordinator"}</div></div>
+    </div>
+    ${j.status === "claimed" ? `<div class="row wrap" style="margin-top:16px;gap:18px"><label class="switch"><input type="checkbox" id="c-temp">Still hot/cold as stated</label><label class="switch"><input type="checkbox" id="c-pack">Packed and covered</label></div>
+      <div class="row wrap" style="margin-top:14px"><button class="btn" data-act="pickup" data-d="${h(j.d)}">Picked up</button><button class="btn ghost" data-act="cancel" data-d="${h(j.d)}">I can't make it</button></div>
+      <p class="hint" style="margin-top:8px">Untick a box if the food isn't right. It gets diverted, never delivered.</p>`
+    : `<div class="row wrap" style="margin-top:16px"><input class="input code-in num" id="c-code" inputmode="numeric" maxlength="4" placeholder="0000" aria-label="Handover code"><button class="btn" data-act="deliver" data-d="${h(j.d)}">Confirm delivery</button></div>
+      <p class="hint" style="margin-top:8px">Ask the shelter for their 4-digit code (it's on their Shelter screen).</p>`}
+  </article>` : "");
+  list($("#v-offers"), x.offers, o => o.offer, o => `<article class="card lift">
+    <div class="row between"><b>${kgf(o.kg)} kg ${h(CAT[o.category] || o.category)}${o.veg === true ? " · veg" : ""}</b><span class="status" style="--c:var(--offered)">${o.km} km away</span></div>
+    <p class="small mute" style="margin-top:6px">Around ${o.area.map(a => a.toFixed(3)).join(", ")} (exact address after you accept) · must be eaten by <b>${h(o.use_by)}</b>${o.respond_by ? ` · reply by <b>${h(o.respond_by)}</b>` : ""}</p>
+    <div class="row" style="margin-top:12px"><button class="btn" data-act="accept" data-o="${h(o.offer)}">Accept</button><button class="btn ghost" data-act="decline" data-o="${h(o.offer)}">Not this time</button></div>
+  </article>`, emptyCard("No offers right now", "Relay only pings you when you're a good fit. Keep this open.", ICON.bike));
+}
+
+// ---------------------------------------------------------------- shelter
+let recId = store.get("relay_rec", null), capFor = null;
+function fillRecSelect() {
+  const sel = $("#r-sel");
+  if (sel.options.length !== S.recipients.length) sel.innerHTML = S.recipients.map(r => `<option value="${h(r.id)}">${h(r.name)} · ${h(r.zone)}</option>`).join("");
+  if (!recId || !S.recipients.some(r => r.id === recId)) recId = S.donations.find(d => ["claimed", "picked_up"].includes(d.status))?.recipient || S.recipients[0]?.id;
+  sel.value = recId;
+  const ids = [...new Set(S.donations.filter(d => ACTIVE.includes(d.status) && d.recipient).map(d => d.recipient))].slice(0, 8);
+  setHTML($("#r-quick"), ids.length ? ids.map(id => `<button class="chip" data-act="open-rec" data-r="${h(id)}">${ICON.home.replace('class="i"', 'class="i" width="14" height="14"')}${h(S.recipients.find(r => r.id === id)?.name || id)}</button>`).join("")
+    : '<span class="tiny mute">No food heading to any shelter yet.</span>');
+}
+function capForm(r) {
+  const G = [["hot", "Hot food"], ["cold", "Chilled"], ["ambient", "Dry / room temp"]];
+  return G.map(([g, n]) => `<div class="row wrap between" style="padding:10px 0;border-bottom:1px solid var(--line);gap:14px">
+      <div style="min-width:120px"><b class="small">${n}</b><div class="tiny mute">kg free tonight</div></div>
+      <input class="input num" style="max-width:120px" id="cap-${g}" type="number" min="0" max="1000" step="1" value="${Math.max(0, Math.round(r.cap[g] ?? 0))}">
+      <label class="switch red"><input type="checkbox" id="full-${g}" ${r.full.includes(g) ? "checked" : ""}>Full</label>
+    </div>`).join("") + `<div class="row" style="margin-top:14px"><button class="btn" data-act="save-cap">Save</button><span class="hint">Relay re-plans right away.</span></div>`;
+}
+async function loadRec(forceForm) {
+  if (!recId) return;
+  const x = await api(`/api/recipients/${encodeURIComponent(recId)}`), r = x.recipient;
+  if (forceForm || capFor !== recId) { $("#r-cap").innerHTML = capForm(r); capFor = recId; }
+  setHTML($("#r-tags"), [r.veg_only ? "🥗 Veg only" : "🍽️ Veg & non-veg", r.mu ? `⏱️ Serves ${r.mu >= 60 ? r.mu / 60 + " h" : r.mu + " min"} after food arrives` : "⏱️ Serves on arrival",
+    r.confidential ? "🔒 Confidential address" : "📍 Public address", `Area: ${r.zone}`].map(t => `<span class="chip static">${h(t)}</span>`).join(""));
+  list($("#r-arr"), x.arriving, a => a.d, a => `<article class="card lift"><div class="row between wrap"><div class="grow"><b class="clip">${h(a.donor)}</b><div class="small mute">${kgf(a.kg)} kg ${h(CAT[a.category] || a.category)} · ${h(a.volunteer)} · ${a.status === "picked_up" ? "on the way now" : "pickup ~" + h(a.eta_pickup)}</div></div>
+    <div style="text-align:center"><div class="tiny mute">Handover code</div><div class="big-num num" style="letter-spacing:.12em;color:var(--brand)">${h(a.code || "—")}</div></div></div></article>`,
+    emptyCard("Nothing on the way", "When a volunteer claims food for you, it shows here with a handover code.", ICON.home));
+  setHTML($("#r-held"), x.held.length ? `<p class="small mute">Space held for you while we find a volunteer: ${x.held.map(hd => `${kgf(hd.kg)} kg ${h(CAT[hd.category] || hd.category)}`).join(", ")}</p>` : "");
+}
+
+// ---------------------------------------------------------------- impact
+async function loadImpact() {
+  const x = await api("/api/impact");
+  if (!$("#i-kpis").children.length) {
+    $("#i-kpis").innerHTML = [["i-kg", "kg rescued"], ["i-meals", "meals served"], ["i-del", "deliveries"], ["i-co2", "kg CO₂e avoided"]]
+      .map(([id, l]) => `<div class="card kpi"><div class="v num" id="${id}">0</div><div class="l">${l}</div></div>`).join("");
+  }
+  countTo($("#i-kg"), x.kg, v => kgf(v)); countTo($("#i-meals"), x.meals); countTo($("#i-del"), x.deliveries);
+  if (x.co2e_kg == null) { $("#i-co2").textContent = "not set"; $("#i-co2").style.fontSize = "20px"; } else countTo($("#i-co2"), x.co2e_kg);
+  const recs = Object.entries(x.by_recipient).sort((a, b) => b[1].kg - a[1].kg), maxKg = Math.max(1, ...recs.map(r => r[1].kg));
+  setHTML($("#i-rec"), recs.length ? recs.map(([n, r]) => `<div class="hbar"><span class="clip">${h(n)}</span><span class="track"><i style="width:${(100 * r.kg / maxKg).toFixed(1)}%"></i></span><span class="val num">${kgf(r.kg)} kg</span></div>`).join("")
+    : '<div class="empty small">No deliveries yet.</div>');
+  const zs = Object.entries(x.by_zone).sort((a, b) => a[0].localeCompare(b[0]));
+  setHTML($("#i-zone"), zs.length ? zs.map(([n, z]) => { const p = z.posted_kg ? z.delivered_kg / z.posted_kg : 0;
+    return `<div class="hbar"><span class="clip">${h(n)}</span><span class="track"><i style="width:${(100 * p).toFixed(1)}%"></i></span><span class="val num">${Math.round(100 * p)}%</span></div>`; }).join("")
+    : '<div class="empty small">No donations yet.</div>');
+  setHTML($("#i-method"), `<b>How we count.</b> ${h(x.method)}`);
+}
+
+// ---------------------------------------------------------------- simulation lab
+const SCEN = [["bengaluru", "Bengaluru · real data (recommended)"], ["bengaluru_strict", "Bengaluru · shelters' listed hours"], ["friday_night", "Synthetic Friday night"],
+  ["normal_weekday", "Synthetic quiet weekday"], ["surge", "Synthetic surge (3× food)"], ["volunteer_drought", "Synthetic volunteer drought"],
+  ["recipient_closure", "Synthetic shelter closure"], ["rain", "Synthetic rainy night"], ["sparse_suburb", "Synthetic thin suburbs"]];
+$("#scen").innerHTML = SCEN.map(([k, n]) => `<option value="${k}">${h(n)}</option>`).join("");
+const PNAME = {B0: "WhatsApp broadcast", B1: "412FR static rule", Relay: "Relay (rules)", "Relay-ML": "Relay + ML", "Relay-RL": "Relay + RL",
+  "Relay-RL lam=0.25": "Relay + RL (burnout-aware)", "BC-greedy": "Imitation (BC)", "Relay -p model": "Relay, no p model", "Relay -early esc": "Relay, no early alert"};
+let demo = null, frame = 0, timer = null;
+async function runDemo(btn) {
+  await busy(btn, async () => {
+    $("#lab-player").innerHTML = '<div class="grid-2e"><div class="skel" style="height:360px"></div><div class="skel" style="height:360px"></div></div>';
+    demo = await api(`/api/sim/demo?scenario=${$("#scen").value}&seed=${clamp(+$("#seed").value || 0, 0, 999)}`);
+    frame = 0;
+    const n = demo[demo.policies[1]].frames.length - 1;
+    $("#lab-player").innerHTML = `<div class="card"><div class="player">
+        <button class="btn ghost sm" data-act="play" id="play">Pause</button>
+        <span class="sim-clock num" id="sim-clock">--:--</span>
+        <input type="range" id="scrub" min="0" max="${n}" value="0" aria-label="Time">
+        <label class="row small mute">Speed <select class="input" id="speed" style="width:auto;padding:6px 10px"><option value="1">1 min/s</option><option value="3" selected>3 min/s</option><option value="8">8 min/s</option></select></label>
+      </div>
+      <div class="grid-2e">${demo.policies.map((p, i) => `<div class="card" style="box-shadow:none">
+        <div class="row between"><h2>${h(PNAME[p] || p)}</h2><span class="status" style="--c:${i ? "var(--brand)" : "var(--posted)"}">${i ? "challenger" : "baseline"}</span></div>
+        <div class="pane-stats"><div><b class="num" id="p${i}-kg">0</b><small>kg rescued</small></div><div><b class="num" id="p${i}-exp" style="color:var(--bad)">0</b><small>kg lost</small></div><div><b class="num" id="p${i}-n">0</b><small>volunteer pings</small></div></div>
+        <div class="tiles" id="p${i}-tiles"></div><div class="feed" id="p${i}-feed"></div></div>`).join("")}</div>
+      <div class="map-foot" style="border:0;padding:12px 0 0">${["offered", "claimed", "picked_up", "delivered", "expired"].map(s => `<span class="legend"><i style="--c:var(--${s})"></i>${STATUS[s]}</span>`).join("")}<span class="legend"><i style="--c:#fff;box-shadow:0 0 0 2px var(--bad)"></i>Escalated</span></div></div>`;
+    $("#scrub").addEventListener("input", e => { frame = +e.target.value; drawFrame(); });
+    play(true);
+    drawFrame();
+    toast("Replaying the same night under two policies", "info");
+  });
+}
+function play(on) {
+  clearInterval(timer); timer = null;
+  if (on) timer = setInterval(() => {
+    const n = demo[demo.policies[1]].frames.length - 1;
+    frame = Math.min(frame + +$("#speed").value, n);
+    drawFrame();
+    if (frame >= n) play(false);
+  }, 1000);
+  const b = $("#play"); if (b) b.textContent = timer ? "Pause" : "Play";
+}
+function drawFrame() {
+  if (!demo || !$("#scrub")) return;
+  $("#scrub").value = frame;
+  const info = Object.fromEntries(demo.donations.map(d => [d.id, d]));
+  demo.policies.forEach((p, i) => {
+    const run = demo[p], f = run.frames[Math.min(frame, run.frames.length - 1)];
+    $("#sim-clock").textContent = simClock(f.t);
+    countTo($(`#p${i}-kg`), f.kg); countTo($(`#p${i}-exp`), f.exp); countTo($(`#p${i}-n`), f.n);
+    setHTML($(`#p${i}-tiles`), demo.donations.map(dn => { const s = f.d[dn.id];
+      return s ? `<span class="tile ${s[1] && OPEN.includes(s[0]) ? "x" : ""}" style="--c:var(--${s[0]})" title="${h(dn.donor)} · ${kgf(dn.kg)} kg · ${h(STATUS[s[0]] || s[0])}">${Math.round(dn.kg)}</span>`
+               : `<span class="tile none"></span>`; }).join(""));
+    const ev = run.feed.filter(e => e.t <= f.t && e.type !== "RecipientChosen").slice(-30).reverse();
+    list($(`#p${i}-feed`), ev, e => `${e.t}:${e.type}:${e.d}`, e => {
+      const d = info[e.d], who = d ? `${h(d.donor)} (${kgf(d.kg)} kg)` : h(demo.recipients[e.r]?.name || "");
+      const txt = {EscalationRaised: `⚠️ needs a human: ${h(e.reason)}`, BackupDispatched: "🚐 backup courier sent", ClaimCancelled: "↩️ volunteer cancelled",
+        Delivered: "✅ delivered", Expired: `❌ lost: ${h(e.reason)}`, CapacityUpdated: "🏠 shelter marked full"}[e.type] || h(e.type);
+      return `<time>${simClock(e.t)}</time><span><b>${who}</b> ${txt}</span>`;
+    });
+  });
+}
+const KEYS = [["rescue_rate", "Food rescued", 3, 1, v => Math.round(v * 1000) / 10 + "%"], ["meals", "Meals rescued", 0, 1], ["expired_kg", "Food lost (kg)", 1, -1],
+  ["safety_violations", "Safety violations", 0, -1], ["notif_per_rescue", "Pings per rescue", 1, -1], ["p95_offers_per_vol", "Pings to busiest volunteers", 1, -1],
+  ["claim_p50", "Median time to claim (min)", 1, -1], ["late_escalations", "Late alerts (<10 min)", 1, -1], ["backups", "Backup courier trips", 1, -1],
+  ["zone_gap", "Gap between areas", 3, -1], ["latency_p95_ms", "Planner speed p95 (ms)", 1, -1]];
+async function runCompare(btn) {
+  await busy(btn, async () => {
+    $("#lab-table").innerHTML = `<div class="card"><div class="skel" style="height:22px;width:40%"></div><div class="skel" style="height:260px;margin-top:14px"></div><p class="hint" style="margin-top:10px">First run of a scenario can take a few minutes; results are cached afterwards.</p></div>`;
+    const x = await api(`/api/sim/compare?scenario=${$("#scen").value}&seeds=30`);
+    const pols = Object.keys(x.table), ref = pols.includes("Relay-RL") ? "Relay-RL" : "Relay";
+    const fmt = (m, dp, f) => m[0] == null ? "–" : `${f ? f(m[0]) : m[0].toFixed(dp)} <small>±${f && dp === 3 ? (m[1] * 100).toFixed(1) + "pt" : m[1].toFixed(dp)}</small>`;
+    $("#lab-table").innerHTML = `<div class="card enter"><div class="row between wrap"><h2>${h(SCEN.find(s => s[0] === x.scenario)?.[1] || x.scenario)} · ${x.seeds} nights</h2><span class="status" style="--c:var(--warn)">simulated · mean ± 95% CI</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Metric</th>${pols.map(p => `<th>${h(PNAME[p] || p)}</th>`).join("")}<th>${h(PNAME[ref] || ref)} vs 412FR</th></tr></thead><tbody>
+      ${KEYS.map(([k, n, dp, dir, f]) => { const vals = pols.map(p => x.table[p][k]?.[0]).filter(v => v != null), best = dir > 0 ? Math.max(...vals) : Math.min(...vals);
+        const pr = x.paired_vs_B1[ref]?.[k];
+        return `<tr><td>${n}</td>${pols.map(p => { const m = x.table[p][k] || [null]; return `<td class="${m[0] != null && Math.abs(m[0] - best) < 1e-9 && vals.length > 1 ? "best" : ""}">${fmt(m, dp, f)}</td>`; }).join("")}
+          <td>${pr && pr[0] != null ? `${pr[0] > 0 ? "+" : ""}${f ? (pr[0] * 100).toFixed(1) + "pt" : pr[0].toFixed(dp)} <small>±${f ? (pr[1] * 100).toFixed(1) : pr[1].toFixed(dp)}</small>` : "–"}</td></tr>`; }).join("")}
+      </tbody></table></div><p class="hint" style="margin-top:10px">${h(x.label)}. Green = best in row.</p></div>`;
+  });
+}
+
+// ---------------------------------------------------------------- actions (event delegation)
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const a = b.dataset.act;
+  if (a === "tab") return show(b.dataset.tab);
+  if (a === "example") { $("#d-text").value = b.dataset.text; return parseText($("[data-act=parse]")); }
+  if (a === "parse") return parseText(b);
+  if (a === "post") return postDonation(b);
+  if (a === "geo") return navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => { setLoc({lat: p.coords.latitude, lng: p.coords.longitude}); MAP.pick?.setView(pickLoc, 15); }, () => toast("Location not available", "err")) : toast("Location not available", "err");
+  if (a === "open-vol") { volId = b.dataset.v; store.set("relay_vol", volId); show("volunteer"); return; }
+  if (a === "open-rec") { recId = b.dataset.r; store.set("relay_rec", recId); show("shelter"); return; }
+  if (a === "backup") return busy(b, async () => { await api(`/api/donations/${b.dataset.d}/backup`, {method: "POST"}); toast("Backup courier dispatched"); await refresh(); });
+  if (a === "accept" || a === "decline") return busy(b, async () => {
+    await api(`/api/offers/${encodeURIComponent(b.dataset.o)}/respond`, {method: "POST", body: JSON.stringify({accept: a === "accept"})});
+    toast(a === "accept" ? "Accepted. The address is now visible." : "No problem, we'll ask someone else.", a === "accept" ? "ok" : "info");
+    await refresh();
+  });
+  if (a === "pickup") return busy(b, async () => {
+    const r = await api(`/api/donations/${b.dataset.d}/pickup`, {method: "POST", body: JSON.stringify({temp_ok: $("#c-temp").checked, packaging_ok: $("#c-pack").checked})});
+    toast(r.status === "diverted" ? "Diverted: food won't be served (safety first)" : "Picked up. Head to the shelter.", r.status === "diverted" ? "info" : "ok");
+    await refresh();
+  });
+  if (a === "cancel") return busy(b, async () => { await api(`/api/donations/${b.dataset.d}/cancel`, {method: "POST"}); toast("Released. Relay is asking someone else.", "info"); await refresh(); });
+  if (a === "deliver") return busy(b, async () => {
+    const code = $("#c-code").value.trim();
+    if (!/^\d{4}$/.test(code)) throw new Error("Enter the 4-digit code from the shelter");
+    const r = await api(`/api/donations/${b.dataset.d}/deliver`, {method: "POST", body: JSON.stringify({code})});
+    toast(r.receipt); await refresh();
+  });
+  if (a === "save-cap") return busy(b, async () => {
+    const G = ["hot", "cold", "ambient"];
+    const cap = Object.fromEntries(G.map(g => [g, clamp(+$(`#cap-${g}`).value || 0, 0, 1000)]));
+    await api(`/api/recipients/${encodeURIComponent(recId)}/capacity`, {method: "PATCH", body: JSON.stringify({cap, full: G.filter(g => $(`#full-${g}`).checked)})});
+    toast("Saved. Relay re-planned around your space."); await refresh(); await loadRec(true);
+  });
+  if (a === "demo") return runDemo(b);
+  if (a === "compare") return runCompare(b);
+  if (a === "play") return play(!timer);
+});
+$("#v-sel").addEventListener("change", e => { volId = e.target.value; store.set("relay_vol", volId); $("#v-offers").innerHTML = ""; $("#v-job")._h = null; loadVol().catch(err => toast(err.message, "err")); });
+$("#r-sel").addEventListener("change", e => { recId = e.target.value; store.set("relay_rec", recId); $("#r-arr").innerHTML = ""; loadRec(true).catch(err => toast(err.message, "err")); });
+$("#d-text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) parseText($("[data-act=parse]")); });
+
+// ---------------------------------------------------------------- refresh loop
+async function renderTab() {
+  if (!S) return;
+  try {
+    if (tab === "board") renderBoard();
+    if (tab === "donate") renderDonate();
+    if (tab === "volunteer") { fillVolSelect(); await loadVol(); }
+    if (tab === "shelter") { fillRecSelect(); await loadRec(); }
+    if (tab === "impact") await loadImpact();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function refresh() {
+  try {
+    S = await api("/api/state");
+    if (!online) toast("Reconnected", "ok");
+    online = true;
+  } catch (e) { online = false; }
+  $("#live").classList.toggle("off", !online);
+  if (!S) { $("#clock").textContent = "offline, retrying…"; return; }
+  $("#policy").textContent = PNAME[S.policy] || S.policy;
+  $("#clock").textContent = online ? `Live · ${clock(liveNow())}` : "offline, retrying…";
+  await renderTab();
+}
+(async () => {
+  try { CARTO_KEY = (await api("/api/config")).carto_key || ""; } catch (e) {}
+  if (!CARTO_KEY) toast("No CARTO key set (RELAY_CARTO_KEY in .env): map tiles will be watermarked", "info");
+  MAP.main = baseMap("map", [12.97, 77.6], 12);
+  show(location.hash.slice(1) || "board", false);
+  await refresh();
+  setInterval(refresh, 3000);
+})();
+setInterval(() => { if (S && online) $("#clock").textContent = `Live · ${clock(liveNow())}`; }, 1000);
+</script>
+</body>
+</html>

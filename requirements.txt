@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+# ML pipeline (ml.py) and the learned dispatch policies
+numpy
+pandas
+pyarrow
+scikit-learn
+# optional: LLM intake (falls back to the regex parser without it)
+# anthropic
