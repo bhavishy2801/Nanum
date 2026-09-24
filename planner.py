@@ -142,20 +142,28 @@ def _model(path):
     return _models[path]
 
 
-def _learned_k(s, d, now, cfg):
-    """Wave size from the FQI Q-function (argmax over candidates) or the behaviour-cloning classifier."""
+def rl_inputs(s, d, now, cfg):
+    """(state vector, candidate actions) exactly as the learned policies see them."""
     pool = sorted((p_accept(v, d, now, cfg) for v in s.volunteers.values()
                    if available(v, now) and v.cap_kg >= d.kg and f"{d.id}:{v.id}" not in s.offers
                    and pick_time(d, v.loc, now, 0, cfg) <= d.b), reverse=True)
     mine = [o for o in s.offers.values() if o.d == d.id]
     x = rl_state(now - d.posted, min(d.b, d.safe_until - cfg["eps"]) - now, d.kg, d.meals, d.category,
                  late(now), len(mine), sum(o.p or 0 for o in mine), pool)
-    m = _model(cfg["wave_model"])
+    return x, rl_candidates(pool)
+
+
+def q_values(model_path, x, cands):
+    return [float(q) for q in _model(model_path).predict([x + [k, mass] for k, mass in cands])]
+
+
+def _learned_k(s, d, now, cfg):
+    """Wave size from the FQI Q-function (argmax over candidates) or the behaviour-cloning classifier."""
+    x, cands = rl_inputs(s, d, now, cfg)
     if cfg["wave"] == "bc":
-        return RL_K[int(m.predict([x])[0])]
-    cands = rl_candidates(pool)
-    q = m.predict([x + [k, mass] for k, mass in cands])
-    return cands[int(q.argmax())][0]
+        return RL_K[int(_model(cfg["wave_model"]).predict([x])[0])]
+    q = q_values(cfg["wave_model"], x, cands)
+    return cands[max(range(len(q)), key=q.__getitem__)][0]
 
 
 def _wave(s, d, E, p, L, now, cfg):

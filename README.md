@@ -10,7 +10,9 @@ python sim.py bengaluru 30           # evaluate all policies on 30 held-out epis
 python app.py                        # http://127.0.0.1:8000 (Bengaluru, dispatching with Relay-RL)
 ```
 
-**Testing each PS feature and presenting: [DEMO.md](DEMO.md)** (`python ps_check.py` against the running app gives 16 PASS/FAIL checks).
+Google sign-in, admins, the CARTO map key and other settings go in `.env`; see [DEMO.md](DEMO.md) §1.
+Roles: food donors, drivers, shelters and admins each see only their part. Admins also get **How Relay thinks**, an animated walkthrough of the rules, the ML model and the RL agent (DEMO.md §5).
+**Running, testing each PS feature and presenting: [DEMO.md](DEMO.md)** (`python ps_check.py` against the running app gives 21 PASS/FAIL checks).
 **The ML/RL guide is in [GUIDE.md](GUIDE.md)**: the data audit, model results, how to run, retrain and tune.
 
 Delete `relay.db` to reset the live demo. It holds the event log, and state is rebuilt by replaying it.
@@ -26,7 +28,7 @@ Delete `relay.db` to reset the live demo. It holds the event log, and state is r
 | `app.py` | FastAPI + append-only SQLite event log. Re-plans on every change and every 60 s |
 | `ml.py` | Data audit and fixes, acceptance model, decision dataset, behaviour cloning, fitted Q iteration |
 | `models/` | Trained models and reports written by `ml.py` |
-| `index.html` | Coordinator console (map, risk queue by slack, P(claim), L_d, backup button, "why this recipient"), Donor, Volunteer, Recipient, Impact, Simulation lab |
+| `static/` | Front end: `index.html` shell, `app.css` design system, `app.js` (sign-in, onboarding, role screens), `explainer.js` (How Relay thinks) |
 
 ## Results on the synthetic city (simulated, friday_night, 30 seeds, mean ± 95% CI)
 
@@ -52,7 +54,6 @@ The ablations are in the Simulation lab table. Swapping the p model for a consta
 - **OSRM.** Uses haversine × 1.35 instead.
 - **Real OSM layout.** The synthetic scenarios use a made-up city around Noida; the `bengaluru` scenarios use relay_data's coordinates.
 - **Telegram/WhatsApp.** A web chat box stands in.
-- **Auth.** Add magic links or OTP before any real pilot.
 - **WebSocket.** The UI polls every 3 s.
 - **Bootstrap CIs.** Uses a normal approximation.
 

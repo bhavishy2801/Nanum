@@ -4,7 +4,9 @@
     python ps_check.py            # in another; prints PASS/FAIL per PS capability
 
 It posts real donations and walks them through the whole lifecycle, so run it on a demo database, not a real one.
+It signs in with the demo accounts (RELAY_DEMO_LOGIN=1) and pauses the living-city simulation while it runs.
 """
+import http.cookiejar
 import json
 import sys
 import time
@@ -15,11 +17,18 @@ BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 results = []
 
 
-def call(method, path, body=None):
+def session():
+    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+ADMIN, DONOR, ANON = session(), session(), session()
+
+
+def call(method, path, body=None, who=None):
     req = urllib.request.Request(BASE + path, method=method, data=json.dumps(body).encode() if body else None,
                                  headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with (who or ADMIN).open(req, timeout=120) as r:
             return r.status, json.loads(r.read() or b"null") if "json" in r.headers.get("Content-Type", "") else r.read()
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b"null")
@@ -43,9 +52,20 @@ def post(center, **kw):
     return code, d, (time.perf_counter() - t) * 1000
 
 
-code, st = call("GET", "/api/state")
-if code != 200:
+try:
+    call("GET", "/api/config", who=ANON)
+except OSError:
     sys.exit(f"app not reachable at {BASE}: start it with `python app.py`")
+check("Auth", "signed-out visitors can't see the city", call("GET", "/api/state", who=ANON)[0] == 401)
+code, me = call("POST", "/api/auth/demo", {"role": "admin"}, who=ADMIN)
+if code != 200:
+    sys.exit("demo sign-in is off: set RELAY_DEMO_LOGIN=1 in .env to run this check")
+call("POST", "/api/auth/demo", {"role": "donor"}, who=DONOR)
+check("Auth", "a restaurant account can't open the admin board", call("GET", "/api/state", who=DONOR)[0] == 403)
+check("Auth", "a restaurant account can't open a driver's screen", call("GET", "/api/volunteers/V0001", who=DONOR)[0] == 403)
+code, st = call("GET", "/api/state")
+was_running = st["sim"]["running"]
+call("POST", "/api/admin/sim", {"running": False})   # keep simulated drivers from answering our test offers
 center = [sum(r["loc"][i] for r in st["recipients"]) / len(st["recipients"]) for i in (0, 1)]
 print(f"app up · policy {st['policy']} · {len(st['recipients'])} recipients · {len(st['volunteers'])} volunteers\n")
 
@@ -140,6 +160,14 @@ if code == 200:
           f"rescue {t['B0']['rescue_rate'][0]:.2f} -> {t[best]['rescue_rate'][0]:.2f}, "
           f"notifications/rescue {t['B0']['notif_per_rescue'][0]:.0f} -> {t[best]['notif_per_rescue'][0]:.1f}")
 
+code, dd, _ = post(center, kg=4)
+code2, home = call("GET", "/api/donor/home", who=DONOR)
+check("Roles", "a restaurant sees only its own donations", code2 == 200 and all(d["id"] != dd["id"] for d in home["donations"]))
+call("POST", "/api/donations", dict(lat=center[0], lon=center[1], category="bakery", holding="ambient", kg=2), who=DONOR)
+code2, home = call("GET", "/api/donor/home", who=DONOR)
+check("Roles", "a restaurant's own post shows up in its tracker, without the handover code",
+      code2 == 200 and bool(home["donations"]) and "code" not in home["donations"][0])
+call("POST", "/api/admin/sim", {"running": was_running})
 print(f"\n{sum(results)}/{len(results)} checks passed")
-print("Not built (say so if asked): SMS/email/push notifications (offers are in-app), multi-stop routing, auth.")
+print("Not built (say so if asked): SMS/email/push notifications (offers are in-app), multi-stop routing.")
 sys.exit(0 if all(results) else 1)

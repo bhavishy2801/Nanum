@@ -1,103 +1,167 @@
-# Testing and presenting Relay (PS-1: Surplus-to-Shelter)
+# Relay: set up, run, test, present
 
-## 1. Prove every PS feature works (2 minutes)
+This is the complete playbook. The ML and RL internals are in [GUIDE.md](GUIDE.md).
+
+---
+
+## 1. One-time setup (10 minutes)
+
+### 1.1 Install
 
 ```bash
-del relay.db            # PowerShell. On bash: rm relay.db
-python app.py
+pip install -r requirements.txt
 ```
 
-Then, in a second terminal:
+### 1.2 Google sign-in (OAuth)
 
-```bash
-python ps_check.py
+1. Open https://console.cloud.google.com/apis/credentials, then **Create credentials → OAuth client ID**. If asked, configure the consent screen first: External, with an app name and your email.
+2. Choose **Application type: Web application**.
+3. Under **Authorized JavaScript origins**, add `http://localhost:8000` and `http://127.0.0.1:8000`, plus your real domain if you deploy. No redirect URI is needed: Relay uses Google's pop-up button, and the server verifies the ID token with Google.
+4. Copy the **Client ID** into `.env`:
+
+```
+GOOGLE_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
+RELAY_ADMINS=you@gmail.com,teammate@gmail.com     # these Google accounts become admins
+RELAY_DEMO_LOGIN=1                                # one-click demo accounts; set 0 for a real launch
+RELAY_CARTO_KEY=<your CARTO basemap key>          # removes the "API KEY REQUIRED" map watermark
+RELAY_POLICY=Relay-RL
+RELAY_SIM=1                                       # the living city (see §3)
 ```
 
-`ps_check.py` drives the live API through every capability the problem statement lists and prints `16/16 checks passed`. **Screenshot that output for a slide.** Afterwards, delete `relay.db` again so the demo starts clean.
+`.env` is excluded from git. The client ID and the CARTO key are meant to be public, because the browser needs them. Keep your client **secret** out of this project entirely; Relay doesn't use it.
 
-The deeper checks are these (GUIDE.md explains them):
+### 1.3 Models and cached results
+
+Skip this if `models/` already holds the trained files.
 
 ```bash
-python test_relay.py
+python ml.py all
 ```
 
 ```bash
 python sim.py bengaluru 30
 ```
 
-### PS requirement → where it lives → how to show it
+---
 
-| PS asks for | Relay feature | Show it by | Verified by |
-|---|---|---|---|
-| §5.1 Fast intake (under a minute) | Paste free text → parsed card → one-tap post | Donor tab: paste, click **Read message**, click **Post** | ps_check: parse ~25 ms, post ~50 ms |
-| §5.2 Real-time matching on capacity, need and distance | Stage-1 recipient scoring: fill-rate equity, travel, slack, safety | Console card → **Why this recipient?** | ps_check |
-| §5.3 Dispatch / routing suggestion | Sized offer wave (RL-learned) to the best volunteers; route line on the map | Console map line; Volunteer tab offer → accept → pickup-by time and drop-off | ps_check: 2 of 150 volunteers offered, not a broadcast |
-| §5.4 Capacity and preferences | Per-class capacity, "full" toggles, veg-only, use-lead | Recipient tab: tick **full for hot** → console shows the re-route | ps_check: R004 → R005 |
-| §5.5 Status tracking | posted → offered → claimed → picked up → delivered, plus expired and diverted | Console badges; donor card updates live | ps_check |
-| §5.6 Impact dashboard | kg and meals counted only on confirmed delivery; per recipient and per zone; CSV | Impact tab → **Download CSV** | ps_check |
-| §5.7 Notifications | **In-app only**: volunteer offers, coordinator escalation alerts, donor status | Volunteer tab, red escalation cards | *SMS, email and push are not built. Say so.* |
-| §5.8 Optional: safety / expiry-risk scoring | Rule-based safety clock (never ML), live P(claim), slack, escalation deadline L_d | Console card: countdown, P(claim) bar, L_d | ps_check: food past its use-by is never offered |
-| §7 Safety | Deadline is when food is **used**, not delivered (use-lead) | Why-not text: "next service is 8.0 h after arrival" | test_relay: 0 violations across all policies and scenarios |
-| §7 Privacy | ~500 m area until acceptance; confidential shelters hidden | Volunteer offer card | ps_check |
-| §7 Reliability | Cancel → automatic re-offer; one-click backup; event-log replay | Volunteer **I can't make it**; console **Assign backup** | ps_check, test_relay |
-| §7 Near-instant | Planner p95 is 2–16 ms | Simulation lab table (latency row) | sim.py |
-| §6 AI/ML/RL (only where it helps) | Acceptance model at the oracle ceiling; offline RL for wave size | GUIDE.md §3–5 | ml.py reports |
-
-**CO₂e:** the PS asks for it, and it's off by default because a number without its source is a red flag. Pick one factor, cite it, and start the app with it:
+## 2. Run it
 
 ```bash
-$env:RELAY_CO2E_PER_KG="<factor>"; python app.py
+python app.py
 ```
 
-Put the factor's source on the slide.
+Open **http://localhost:8000**.
+
+- **Reset the city:** stop the app, delete `relay.db`, and start it again. This also removes all accounts.
+- **Different port:** `$env:PORT="8010"; python app.py`. Add that origin in Google Cloud too.
 
 ---
 
-## 2. Before you present (checklist)
+## 3. Who sees what
 
-- [ ] `del relay.db`, `python app.py`, then open http://127.0.0.1:8000. The first start takes a few seconds while the models load.
-- [ ] `results_bengaluru.json` exists, so the 30-seed table loads instantly instead of recomputing.
-- [ ] Internet is available for the map tiles. Without it the page says "Map offline" and **everything else still works**. Hotspot recommended.
-- [ ] Browser zoom at 125% so the back row can read it.
-- [ ] Record a backup video of the demo below. Use it if anything breaks.
-- [ ] Rehearse the demo twice; it takes 3 minutes.
-
----
-
-## 3. The 5-minute pitch
-
-| Time | Say | Show |
+| Role | How they get it | What they see |
 |---|---|---|
-| 0:00–0:25 **Hook** | "It's 10:45 on a Friday. A restaurant has 30 plates of biryani and 4 hours before it's unsafe. A shelter wants it, and a volunteer lives 2 km away. It still gets binned, not because nobody cares, but because nobody *commits* in time." | Title slide |
-| 0:25–1:00 **Insight** | "We thought this was matching. It isn't: platforms report 99% match rates. In the best public data (412 Food Rescue), 1 in 6 rescues went unclaimed or needed a last-hour phone call. **You can't dispatch a volunteer. You can only ask.**" | One statistic |
-| 1:00–1:15 **Product** | "Relay is a co-pilot for the rescue coordinator. For every donation it answers: will this food make it, and if not, when must a human step in?" | Console |
-| 1:15–3:00 **Live demo** | Script below | App |
-| 3:00–3:50 **How it works** | "Three clocks: food safety, donor and recipient. Safety is a fixed rule and never ML. An ML model predicts who will say yes; it's at the accuracy ceiling on held-out data. Offline RL learns how many people to ask. And an escalation deadline, independent of ML, alerts the coordinator while there's still time." | One architecture slide |
-| 3:50–4:30 **Evidence** | "On 30 held-out episodes from the dataset, Relay-RL rescues 90% of the food with **12.7 notifications per rescue, versus 145** for a WhatsApp broadcast, with zero safety violations. The 412-style rule rescues 4 points more, but needs 5× the pings, and its busiest volunteers get about 31 per night. That's the burnout trade-off, and it's one parameter." | Results table, labelled "simulated" |
-| 4:30–5:00 **Close** | "Pilot: our campus dining hall and one NGO chapter, 6 weeks in shadow mode first. Relay makes every donation someone's job, before the clock runs out." | Closing slide |
+| **Food donor** (restaurant, food chain outlet, kiosk, caterer, bakery, grocer, hotel, campus dining) | Sign in with Google, then choose "I have surplus food" | **Donate food** (paste, check, post), **My donations** (live map and 5-step tracker), **My impact** |
+| **Driver** | Google, then "I can drive food" (name, vehicle, start area) | **My rescues** (online/offline switch, offers, the current job with a pickup checklist and the handover code, map), **My impact** |
+| **Shelter / kitchen** | Google, then "I run a shelter" (manage an existing site or register a new one) | **Tonight** (free space per food type, "Full" switches, arriving food with the 4-digit code), **Received** |
+| **Admin** | Their Google email is in `RELAY_ADMINS` | Everything: **Live board**, **How Relay thinks**, **Donor / Driver / Shelter view** (act as anyone), **Simulation lab**, **Impact**, **System** |
 
-### Live demo script (1:45)
+The server enforces all of this. A restaurant can't open another restaurant's donations, the admin board, or a driver's screen; the API returns 403.
 
-1. **Donor tab.** Paste `30 plates veg biryani + 40 rotis, kept hot, we close 11` and click **Read message**. The card fills in (cooked, hot, veg, 30 plates, until 23:00). Click **Post**. *Say:* "Under a minute, from the message they already type."
-2. **Coordinator tab.** The new card shows the safety countdown, P(claim) and the escalation time. Open **Why this recipient?** and point at a shelter ruled out because its "next service is 8.0 h after arrival". *Say:* "The safety deadline is when food is eaten, not when it's delivered. Naive systems miss this."
-3. **Recipient tab.** For the chosen shelter, tick **full for hot** and click **Save**. Back on the console, the donation has moved to another shelter. *Say:* "Plans change, so Relay re-plans."
-4. **Volunteer tab.** Pick the volunteer who has the offer. It shows only a ~500 m area and the distance. Click **Accept**; the full address appears. Tick the checklist and click **Picked up**. Get the 4-digit code from the Recipient tab, enter it and click **Delivered**. A receipt pops up. *Say:* "Only a handful of the 150 volunteers were pinged."
-5. **Impact tab.** kg and meals have updated, and the CSV is ready for CSR reporting.
-6. **Simulation lab.** Choose scenario `bengaluru`, click **Same-seed replay**, and let it play for 20 s. Then click **30-seed comparison**. *Say:* "Same donations, same volunteers, different policy. Every number here is simulated, and we say so."
+**The living city.** Everyone who isn't a signed-in person is simulated from the relay_data behaviour. Simulated restaurants post food, simulated drivers answer offers with the dataset's measured probabilities and delays (×10 speed), pick up and deliver, and shelters receive it. So any single role can be demoed end to end:
+- a **restaurant** sees a real-looking driver claim and deliver its food;
+- a **driver** gets offers from simulated restaurants;
+- a **shelter** gets deliveries with codes.
+
+Signed-in people's drivers and shelters are **never** auto-driven. Admins control the city on **System**: pause or resume, speed, how often food is posted, and "post one now".
 
 ---
 
-## 4. Hard questions: answer honestly
+## 4. Test that everything works
+
+With the app running:
+
+```bash
+python ps_check.py
+```
+
+It should end with **21/21 checks passed**. It covers every problem-statement capability, plus sign-in and role isolation (signed-out visitors blocked; a restaurant can't see admin or driver data or other restaurants' donations). It signs in with the demo accounts and pauses the city while it runs.
+
+```bash
+python test_relay.py
+```
+
+These are the 7 property tests: safety, replay, budget, and the simulator against the data.
+
+In the app, **System** shows live health checks: database, policy, models, planner speed, food safety, living city, Google sign-in, map key, and a warning while demo accounts are on. It also shows everyone who has signed in and a live activity stream (simulated actions are tagged "sim").
+
+---
+
+## 5. The live demo (about 3 minutes)
+
+Before you start:
+- delete `relay.db` and start `python app.py`;
+- open the app full-screen at 110–125% zoom;
+- run `python sim.py bengaluru 30` once beforehand;
+- record a backup video.
+
+Use Google sign-in, or the demo buttons if you're offline or short of time.
+
+1. **Sign in as a restaurant** (Google, or the **Restaurant** demo). Tap the **🍛 Biryani, hot** example, then **Post donation**. The toast names the shelter.
+   *Say:* "Thirty seconds, from the message a restaurant already types on WhatsApp."
+2. **My donations.** Watch the tracker: *Matched → Claimed* (a simulated driver usually accepts within a minute), then *Picked up → Delivered*. The map shows the route.
+3. **Sign out, then sign in as Admin.** On the **Live board**, open a card's **Why this shelter?**. Point at a shelter ruled out because its "next service is 8.0 h after arrival".
+   *Say:* "Food must be safe when it's eaten, not just when it's delivered."
+4. **How Relay thinks** (the showpiece, 90 seconds). Press **▶ Play tour**, or click through the 8 steps:
+   1. food posted (the safety clock ring fills);
+   2. rules test every shelter (✓/✕ with reasons) and pick one;
+   3. the ML model's probability for each driver;
+   4. the RL agent scores "ask 0/1/2/3/5/8" (bars rise, the winner glows);
+   5. offers fly out, with the claim-odds maths;
+   6. a sampled outcome (a driver accepts, the scooter delivers) and the reward ledger;
+   7. training replay: the agent's opinion changing over 20 rounds as the error curve settles;
+   8. results on 30 held-out nights.
+
+   Then use **Try it yourself**: drag "Minutes until latest pickup" down and watch the agent start asking more drivers.
+5. **Simulation lab.** Click **Replay one night** (412 rule vs Relay + RL side by side), then **Compare 30 nights**.
+6. **System** (optional). All checks are green, and the activity stream shows the living city in real time.
+
+---
+
+## 6. The pitch (5 minutes)
+
+| Time | Say |
+|---|---|
+| 0:00 | "It's 10:45 on a Friday. A restaurant has 30 plates of biryani and 4 hours before it's unsafe. It still gets binned, because nobody **commits** in time." |
+| 0:25 | "This isn't a matching problem. In the best public data, 1 in 6 rescues went unclaimed or needed a last-hour call. **You can't dispatch a volunteer. You can only ask.**" |
+| 1:00 | Demo, steps 1–3 |
+| 2:00 | "How Relay thinks": rules for safety, ML for who'll say yes, RL for how many to ask, and a human alerted in time. |
+| 3:30 | "On 30 held-out nights: 89.6% of food rescued with 12.7 pings per rescue, versus 145 for a WhatsApp broadcast, with zero safety violations. The 412-style rule rescues 4 points more but pings 5× as much. That's a burnout setting, not a hidden flaw." |
+| 4:30 | "Every role signs in with Google and sees only its part. The pilot: our campus dining hall and one NGO chapter, 6 weeks in shadow mode." |
+
+### Hard questions
 
 | Question | Answer |
 |---|---|
-| "Your results are simulated." | "Yes. The simulator replays real donation streams from held-out episodes, and its volunteer model reproduces the dataset's own probabilities exactly; there's a test for that. Field proof is the 6-week shadow pilot." |
-| "B1 rescues more food than you." | "On this dataset, yes: 4 points, because donors are only available 30–120 minutes and blasting wins on speed. It costs 5× the notifications. Lifting our per-volunteer budget closes about half the gap (0.885 → 0.914) at the cost of more pings; the trade-off table is in the guide. We'd rather decide burnout policy with the NGO than hide it." |
-| "Why RL?" | "Only for wave size, where it halved notifications. Safety and escalation stay rules: the logs had zero escalations to learn from, and a wrong model must never make food unsafe." |
-| "Is the ML real?" | "The acceptance model scores log loss 0.2665 against a perfect-information ceiling of 0.2660 on held-out episodes, and its predictions are served exactly as trained." |
-| "What was wrong with the data?" | "Five issues: relative timestamps, an RL file built on them, empty behaviour-cloning labels, the oracle probability leaked as `p_hat`, and a broken late-night flag. We measured each one and rebuilt from the raw logs." |
-| "Notifications?" | "In-app today. SMS or WhatsApp is the next integration; the planner already produces the messages." |
-| "What does the LLM do?" | "Extraction only, with a regex fallback and a confirm card. It never makes a safety call." |
-| "Scale?" | "The planner runs in single-digit milliseconds. Rescue is local, so we partition by city zone." |
+| "It's simulated." | "Yes, the city replays real donation streams, and our driver model reproduces the dataset's probabilities exactly; there's a test for that. The field proof is the shadow-mode pilot." |
+| "Does the RL learn live?" | "No, it was trained offline on 31,502 logged decisions (the explainer replays that training). Live outcomes become new training data when we retrain. That's deliberate: nobody wants a policy changing itself mid-shift." |
+| "Why RL at all?" | "Only for how many people to ask, where it halved the pings. Safety and escalation stay rules." |
+| "Is sign-in secure?" | "Google ID tokens are verified with Google, including audience, issuer, expiry and verified email. Sessions are random tokens stored hashed, in HttpOnly SameSite cookies. Every API route checks the role and ownership." |
+| "What about the demo buttons?" | "Development only. `RELAY_DEMO_LOGIN=0` turns them off, and the System page warns while they're on." |
 
-**Never claim:** "reduces food waste by X% in the real world", or "predicts volunteers with Y% accuracy" in the field. And don't show a CO₂e figure without its source.
+**Never claim** real-world percentages, field accuracy, or a CO₂e number without its source.
+
+---
+
+## 7. Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Google button missing, with a yellow note | `GOOGLE_CLIENT_ID` is empty in `.env`. Restart after setting it |
+| Google says "origin not allowed" / `invalid_client` | Add the exact origin you're using (for example `http://localhost:8000`) under **Authorized JavaScript origins**, then wait a few minutes |
+| Signed in but you're not an admin | Add your Google email to `RELAY_ADMINS`, restart, and sign in again |
+| Map says "API KEY REQUIRED" | Set `RELAY_CARTO_KEY` |
+| Nothing happens after a restaurant posts | Check **System**: the living city may be paused. Drivers also reply more slowly late at night (that's the data) |
+| `Address already in use` | Another `python app.py` is running. Close it, or use `$env:PORT="8010"` |
+| Someone should pick a different role | Admin → **System → People → Reset**. They choose again on next sign-in |
+| Old UI after changes | A normal reload works, because the page and its files are cache-busted |

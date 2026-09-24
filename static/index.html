@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay · Food Rescue</title>
+<meta name="description" content="Relay: rescue surplus food before the clock runs out">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="/static/app.css?v=__V__">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="boot" id="boot"><div class="boot-mark"><svg class="i" viewBox="0 0 24 24" width="30" height="30" style="color:#fff"><path d="M4 17c4 0 5-10 9-10h7"/><path d="M16 3l4 4-4 4"/><circle cx="5" cy="17" r="2"/></svg></div></div>
+
+<!-- ============ SIGN IN ============ -->
+<section class="screen" id="scr-signin" hidden>
+  <div class="signin">
+    <div class="hero">
+      <div class="brand"><span class="brand-mark"><svg class="i" viewBox="0 0 24 24" width="22" height="22" style="color:#fff"><path d="M4 17c4 0 5-10 9-10h7"/><path d="M16 3l4 4-4 4"/><circle cx="5" cy="17" r="2"/></svg></span>Relay</div>
+      <h1>Rescue surplus food <span class="grad">before the clock runs out.</span></h1>
+      <p class="lead">Restaurants post leftovers in seconds. Relay finds a shelter that can safely serve it, asks the right drivers at the right time, and calls a human before it's too late.</p>
+      <div class="journey" aria-hidden="true">
+        <svg viewBox="0 0 640 170">
+          <defs><linearGradient id="jg" x1="0" x2="1"><stop offset="0" stop-color="#0f9d74"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient></defs>
+          <path id="jpath" d="M70 110 C 170 20, 250 20, 320 85 S 480 150, 570 70" fill="none" stroke="#e2e8f0" stroke-width="10" stroke-linecap="round"/>
+          <path d="M70 110 C 170 20, 250 20, 320 85 S 480 150, 570 70" fill="none" stroke="url(#jg)" stroke-width="4" stroke-linecap="round" stroke-dasharray="8 12">
+            <animate attributeName="stroke-dashoffset" from="200" to="0" dur="4s" repeatCount="indefinite"/></path>
+          <g><circle cx="70" cy="110" r="30" fill="#fff" stroke="#0f9d74" stroke-width="3"/><text x="70" y="120" text-anchor="middle" font-size="28">🍲</text><text x="70" y="160" text-anchor="middle" class="xs-small">Restaurant</text></g>
+          <g><circle cx="320" cy="85" r="30" fill="#fff" stroke="#f59e0b" stroke-width="3"/><text x="320" y="95" text-anchor="middle" font-size="26">🛵</text><text x="320" y="135" text-anchor="middle" class="xs-small">Driver</text></g>
+          <g><circle cx="570" cy="70" r="30" fill="#fff" stroke="#6366f1" stroke-width="3"/><text x="570" y="80" text-anchor="middle" font-size="26">🏠</text><text x="570" y="120" text-anchor="middle" class="xs-small">Shelter</text></g>
+          <circle r="9" fill="url(#jg)" stroke="#fff" stroke-width="3"><animateMotion dur="4s" repeatCount="indefinite" rotate="auto"><mpath href="#jpath"/></animateMotion></circle>
+        </svg>
+      </div>
+      <div class="roles-mini">
+        <div class="role-mini"><span class="em">🍲</span><div><b>Food businesses</b><span>Restaurants, kiosks, chains, caterers, bakeries, grocers</span></div></div>
+        <div class="role-mini"><span class="em">🛵</span><div><b>Drivers</b><span>Get only the offers you're a good fit for</span></div></div>
+        <div class="role-mini"><span class="em">🏠</span><div><b>Shelters</b><span>Say how much you can take; get a handover code</span></div></div>
+      </div>
+    </div>
+    <div class="auth-card">
+      <h2>Welcome to Relay</h2>
+      <p class="mute" style="margin-top:6px">Sign in with Google. New here? We'll ask how you'll use Relay and set up your space.</p>
+      <div class="gbtn-wrap" id="gbtn"></div>
+      <div class="setup-note" id="g-missing" hidden>Google sign-in isn't set up yet. Add <b>GOOGLE_CLIENT_ID</b> to <code>.env</code> (see DEMO.md). You can use the demo accounts below meanwhile.</div>
+      <div id="demo-box" hidden>
+        <div class="divider">or explore with a demo account</div>
+        <div class="demo-grid">
+          <button class="demo-btn" data-act="demo" data-role="donor"><span class="em" style="background:#fff7ed">🍲</span><span><b>Restaurant</b><span>Post food, track it</span></span></button>
+          <button class="demo-btn" data-act="demo" data-role="volunteer"><span class="em" style="background:#fffbeb">🛵</span><span><b>Driver</b><span>Accept & deliver</span></span></button>
+          <button class="demo-btn" data-act="demo" data-role="shelter"><span class="em" style="background:#eef2ff">🏠</span><span><b>Shelter</b><span>Space & handover</span></span></button>
+          <button class="demo-btn" data-act="demo" data-role="admin"><span class="em" style="background:var(--brand-soft)">🛡️</span><span><b>Admin</b><span>See everything</span></span></button>
+        </div>
+      </div>
+      <p class="fine">We only use your name, email and photo to run your account. Everything else in the city is simulated so you can try your part end to end.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ONBOARDING ============ -->
+<section class="screen" id="scr-onboard" hidden>
+  <div class="onboard">
+    <div class="row between wrap"><div class="brand"><span class="brand-mark"><svg class="i" viewBox="0 0 24 24" width="22" height="22" style="color:#fff"><path d="M4 17c4 0 5-10 9-10h7"/><path d="M16 3l4 4-4 4"/><circle cx="5" cy="17" r="2"/></svg></span>Relay</div><button class="btn ghost sm" data-act="logout">Sign out</button></div>
+    <h1 id="ob-title">How will you use Relay?</h1>
+    <div class="progress-dots"><i class="on" id="ob-d1"></i><i id="ob-d2"></i></div>
+    <div id="ob-step1">
+      <div class="role-cards">
+        <button class="role-card" data-act="ob-role" data-role="donor"><span class="tick"><svg class="i" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12l5 5L20 7"/></svg></span><div class="em" style="background:#fff7ed">🍲</div><h3>I have surplus food</h3><p>Restaurant, food chain outlet, kiosk, caterer, bakery, grocer, hotel or campus dining.</p></button>
+        <button class="role-card" data-act="ob-role" data-role="volunteer"><span class="tick"><svg class="i" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12l5 5L20 7"/></svg></span><div class="em" style="background:#fffbeb">🛵</div><h3>I can drive food</h3><p>Pick up from a donor and drop at a shelter. You only get offers that fit you.</p></button>
+        <button class="role-card" data-act="ob-role" data-role="shelter"><span class="tick"><svg class="i" viewBox="0 0 24 24" width="14" height="14"><path d="M5 12l5 5L20 7"/></svg></span><div class="em" style="background:#eef2ff">🏠</div><h3>I run a shelter / kitchen</h3><p>Receive food for people who need it. Tell us your space; confirm handovers with a code.</p></button>
+      </div>
+      <div class="row" style="margin-top:22px;justify-content:flex-end"><button class="btn lg" data-act="ob-next" id="ob-next" disabled>Continue</button></div>
+    </div>
+    <div id="ob-step2" hidden>
+      <div class="card" id="ob-form"></div>
+      <div class="row between" style="margin-top:18px"><button class="btn ghost" data-act="ob-back">Back</button><button class="btn lg" data-act="ob-finish">Finish setup</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ APP ============ -->
+<div class="screen" id="scr-app" hidden>
+  <header class="top">
+    <div class="top-in">
+      <div class="brand"><span class="brand-mark"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:#fff"><path d="M4 17c4 0 5-10 9-10h7"/><path d="M16 3l4 4-4 4"/><circle cx="5" cy="17" r="2"/></svg></span><span>Relay<small id="who-line"></small></span></div>
+      <div class="pills">
+        <span class="pill" id="sim-pill" hidden title="Everyone who isn't signed in is simulated"><span class="live-dot"></span><span>City sim <b id="sim-speed"></b></span></span>
+        <span class="pill" id="policy-pill" hidden title="The dispatch policy deciding who gets asked and when">Dispatch <b id="policy"></b></span>
+        <span class="pill" id="live"><span class="live-dot"></span><span id="clock" class="num">…</span></span>
+        <div class="me">
+          <button class="me-btn" data-act="menu" aria-haspopup="true"><span class="avatar" id="av"></span><svg class="i" viewBox="0 0 24 24" width="14" height="14"><path d="M6 9l6 6 6-6"/></svg></button>
+          <div class="me-menu" id="me-menu" hidden>
+            <div class="who"><b id="me-name"></b><div class="tiny mute clip" id="me-email"></div><div style="margin-top:8px"><span class="pill role" id="me-role"></span></div></div>
+            <button data-act="logout"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign out</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist"><span class="tab-ink" id="ink"></span></nav>
+  </header>
+
+  <main>
+    <!-- admin: live board -->
+    <section class="view" id="v-board">
+      <div class="view-head"><div><h1>Live board</h1><p>Every rescue in the city, most urgent first. Red cards need a human now. Everyone who isn't signed in is simulated, so the city keeps moving.</p></div>
+        <div class="row"><button class="btn ghost sm" data-act="sim-toggle" id="sim-toggle">Pause city</button><button class="btn sm" data-act="sim-post">Post a test donation</button></div></div>
+      <div class="kpis">
+        <div class="card kpi"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><div class="v num" id="k-active">0</div><div class="l">Active rescues</div></div>
+        <div class="card kpi" id="k-human-card"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div><div class="v num" id="k-human">0</div><div class="l">Need a human</div></div>
+        <div class="card kpi good"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/></svg></div><div class="v num" id="k-kg">0</div><div class="l">kg delivered</div></div>
+        <div class="card kpi good"><div class="glyph"><svg class="i" viewBox="0 0 24 24" width="18" height="18"><path d="M3 11h18M5 11a7 7 0 0 0 14 0M12 4v3"/></svg></div><div class="v num" id="k-meals">0</div><div class="l">Meals served</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card map-card"><div id="map-board" class="map"></div>
+          <div class="map-foot"><span class="legend"><i style="--c:var(--offered)"></i>Finding driver</span><span class="legend"><i style="--c:var(--claimed)"></i>Driver on the way</span><span class="legend"><i style="--c:var(--picked_up)"></i>Picked up</span><span class="legend"><i style="--c:var(--delivered)"></i>Delivered</span><span class="legend"><i style="--c:var(--expired)"></i>Needs a human</span><span class="legend"><i style="--c:#cbd5e1"></i>Driver</span></div></div>
+        <div>
+          <div class="col-head"><h2>Rescues by urgency</h2><span class="tiny mute" id="q-count"></span></div>
+          <div class="queue" id="queue"></div>
+          <div class="card" style="margin-top:14px"><details class="why" style="margin:0;border:0;padding:0"><summary>Recently closed <span class="mute" id="closed-n"></span></summary><div id="closed" style="margin-top:6px"></div></details></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- admin: how relay thinks -->
+    <section class="view" id="v-thinks">
+      <div class="view-head"><div><h1>How Relay thinks</h1><p>Watch one real decision, step by step: rules pick a safe shelter, a machine-learning model predicts which drivers will say yes, and a reinforcement-learning agent decides how many to ask. Then see how that agent learned.</p></div>
+        <div class="xp-top"><div class="seg" id="xp-src"><button class="on" data-act="xp-src" data-live="1">Live donation</button><button data-act="xp-src" data-live="0">Example</button></div><button class="btn ghost sm" data-act="xp-new">New decision</button></div></div>
+      <div class="card xp">
+        <div class="xp-steps" id="xp-steps"></div>
+        <div class="xp-body">
+          <div class="xp-canvas"><svg id="xp-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Animated decision"></svg><div class="xp-caption" id="xp-caption"></div></div>
+          <aside class="xp-panel" id="xp-panel"></aside>
+        </div>
+        <div class="xp-controls">
+          <div class="row"><button class="btn ghost sm" data-act="xp-prev">◀ Back</button><button class="btn sm" data-act="xp-play" id="xp-play">▶ Play tour</button><button class="btn ghost sm" data-act="xp-next">Next ▶</button></div>
+          <div class="prog"><i id="xp-prog"></i></div>
+          <span class="tiny mute" id="xp-count"></span>
+        </div>
+      </div>
+      <div class="card" style="margin-top:18px">
+        <div class="row between wrap"><div><h2>Try it yourself: ask the agent</h2><p class="small mute" style="margin-top:4px">Change the situation and watch the real trained Q-function re-score every option.</p></div>
+          <div class="seg" id="pg-lam"><button class="on" data-act="pg-lam" data-lam="0.02">Dataset reward</button><button data-act="pg-lam" data-lam="0.25">Burnout-aware</button></div></div>
+        <div class="play-grid" style="margin-top:14px">
+          <div id="pg-sliders"></div>
+          <div><div class="qbars" id="pg-bars"></div><div id="pg-verdict" style="margin-top:12px"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- donor: donate (admin: post as any donor) -->
+    <section class="view" id="v-donate">
+      <div class="view-head"><div><h1 id="donate-title">Donate surplus food</h1><p>Paste the message you'd send on WhatsApp. Relay reads it, you check it, and a shelter and driver are lined up in seconds.</p></div></div>
+      <div class="grid-2">
+        <div class="stack">
+          <div class="card">
+            <h2><span class="step">1</span>Tell us what you have</h2>
+            <textarea class="input" id="d-text" style="margin-top:14px" placeholder="e.g. 30 plates veg biryani + 40 rotis, kept hot, we close 11"></textarea>
+            <div class="examples">
+              <button class="chip" data-act="example" data-text="30 plates veg biryani + 40 rotis, kept hot, we close 11">🍛 Biryani, hot</button>
+              <button class="chip" data-act="example" data-text="12 loaves of bread and 20 buns, available till 10 pm">🥖 Bakery</button>
+              <button class="chip" data-act="example" data-text="about 20 kg vegetables and fruits, pick up by 9 pm">🥕 Fruit &amp; veg</button>
+            </div>
+            <div class="row between wrap" style="margin-top:14px"><span id="d-parsed"></span><button class="btn" data-act="parse"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/></svg>Read message</button></div>
+          </div>
+          <div class="card">
+            <h2><span class="step">2</span>Check &amp; post</h2>
+            <div class="form" style="margin-top:14px">
+              <label class="field" id="f-donor-w"><span>Donor name</span><input class="input" id="f-donor" value="Coordinator post" maxlength="80"></label>
+              <label class="field"><span>Food type</span><select class="input" id="f-category"></select></label>
+              <label class="field"><span>Kept</span><select class="input" id="f-holding"><option value="unknown">Not sure</option><option value="hot">Hot</option><option value="cold">Chilled</option><option value="ambient">Room temperature</option></select></label>
+              <label class="field"><span>Vegetarian?</span><select class="input" id="f-veg"><option value="">Not sure</option><option value="true">Yes, veg</option><option value="false">No, non-veg</option></select></label>
+              <label class="field"><span>Weight (kg)</span><input class="input num" id="f-kg" type="number" min="0.1" max="200" step="0.1" placeholder="e.g. 12"></label>
+              <label class="field"><span>Plates (optional)</span><input class="input num" id="f-plates" type="number" min="1" max="2000" placeholder="e.g. 30"></label>
+              <label class="field"><span>Available until</span><input class="input num" id="f-until" type="time"></label>
+              <label class="field" id="f-label-w" hidden><span>Label use-by</span><input class="input" id="f-label" type="datetime-local"></label>
+            </div>
+            <div class="field" style="margin-top:14px"><span>Pickup location <span class="hint">(click the map or drag the pin)</span></span><div id="map-pick" class="map sm"></div></div>
+            <div class="row between wrap" style="margin-top:14px"><span class="hint num" id="f-loc"></span><div class="row"><button class="btn ghost sm" data-act="geo">Use my location</button><button class="btn" data-act="post">Post donation</button></div></div>
+            <p class="hint" style="margin-top:12px">🛡️ The food-safety clock starts when you post and follows fixed rules, never a model. If you're unsure how it was kept, we assume the shortest safe time.</p>
+          </div>
+        </div>
+        <div><div class="col-head"><h2 id="mine-title">Just posted</h2></div><div id="mine"></div></div>
+      </div>
+    </section>
+
+    <!-- donor: my donations -->
+    <section class="view" id="v-mine">
+      <div class="view-head"><div><h1>My donations</h1><p>Where your food is right now, who's carrying it, and which shelter it's feeding.</p></div></div>
+      <div class="grid-2">
+        <div class="card map-card"><div id="map-mine" class="map"></div><div class="map-foot"><span class="legend"><i style="--c:var(--offered)"></i>Finding driver</span><span class="legend"><i style="--c:var(--claimed)"></i>Driver on the way</span><span class="legend"><i style="--c:var(--picked_up)"></i>On its way to shelter</span><span class="legend"><i style="--c:var(--delivered)"></i>Delivered</span></div></div>
+        <div class="queue" id="mine-all"></div>
+      </div>
+    </section>
+
+    <!-- donor: impact -->
+    <section class="view" id="v-dimpact">
+      <div class="view-head"><div><h1>Your impact</h1><p>Counted only when the shelter confirms the handover, so you can quote it.</p></div></div>
+      <div class="kpis" id="dimp-kpis"></div>
+      <div class="card"><h2>Delivered</h2><div id="dimp-list" style="margin-top:8px"></div></div>
+    </section>
+
+    <!-- driver -->
+    <section class="view" id="v-drive">
+      <div class="view-head"><div><h1 id="drive-title">My rescues</h1><p>Offers arrive only when you're a good fit. The exact address appears after you accept.</p></div>
+        <label class="field" id="drive-pick-w" hidden style="min-width:260px"><span>Viewing driver</span><select class="input" id="drive-pick"></select></label></div>
+      <div class="banner" id="drive-quick-w" hidden><span class="em">👀</span><div class="grow"><b class="small">Drivers with something right now</b><div class="chips" id="drive-quick" style="margin-top:6px"></div></div></div>
+      <div class="card online-card"><div class="row"><label class="switch big"><input type="checkbox" id="online" data-act="online"></label><div><div class="state" id="online-state">…</div><div class="tiny mute" id="drive-info"></div></div></div>
+        <div class="row wrap" id="drive-stats"></div></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div><div id="drive-job"></div><div class="col-head" style="margin-top:4px"><h2>Offers for you</h2></div><div class="queue" id="drive-offers"></div></div>
+        <div class="card map-card"><div id="map-drive" class="map md"></div><div class="map-foot"><span class="legend"><i style="--c:var(--brand)"></i>You</span><span class="legend"><i style="--c:var(--offered)"></i>Offer (approximate)</span><span class="legend"><i style="--c:var(--claimed)"></i>Pickup</span><span class="legend"><i style="--c:var(--brand-3)"></i>Drop-off</span></div></div>
+      </div>
+    </section>
+
+    <!-- driver: impact -->
+    <section class="view" id="v-vimpact">
+      <div class="view-head"><div><h1>Your impact</h1><p>Every delivery you completed, confirmed by the shelter's code.</p></div></div>
+      <div class="kpis" id="vimp-kpis"></div>
+      <div class="card"><h2>Deliveries</h2><div id="vimp-list" style="margin-top:8px"></div></div>
+    </section>
+
+    <!-- shelter -->
+    <section class="view" id="v-shelter">
+      <div class="view-head"><div><h1 id="shelter-title">Tonight</h1><p>Tell Relay how much you can take. Give the 4-digit code to the driver at handover.</p></div>
+        <label class="field" id="shelter-pick-w" hidden style="min-width:260px"><span>Viewing shelter</span><select class="input" id="shelter-pick"></select></label></div>
+      <div class="banner" id="shelter-quick-w" hidden><span class="em">👀</span><div class="grow"><b class="small">Shelters expecting food</b><div class="chips" id="shelter-quick" style="margin-top:6px"></div></div></div>
+      <div class="chips" id="r-tags" style="margin-bottom:14px"></div>
+      <div class="grid-2e">
+        <div class="card"><h2>Tonight's free space</h2><div id="r-cap" style="margin-top:14px"></div></div>
+        <div><div class="col-head"><h2>On the way to you</h2></div><div class="queue" id="r-arr"></div><div id="r-held" style="margin-top:10px"></div></div>
+      </div>
+    </section>
+
+    <!-- shelter: received -->
+    <section class="view" id="v-received">
+      <div class="view-head"><div><h1>Received</h1><p>Food handed over to you, confirmed with your code.</p></div></div>
+      <div class="kpis" id="rec-kpis"></div>
+      <div class="card"><h2>Recent handovers</h2><div id="rec-list" style="margin-top:8px"></div></div>
+    </section>
+
+    <!-- admin: impact -->
+    <section class="view" id="v-impact">
+      <div class="view-head"><div><h1>Impact</h1><p>Counted only when the shelter confirms the handover code, so the numbers are safe to report.</p></div>
+        <a class="btn ghost" href="/api/impact.csv" download><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download CSV</a></div>
+      <div class="kpis" id="i-kpis"></div>
+      <div class="grid-2e"><div class="card"><h2>Delivered by shelter</h2><div id="i-rec" style="margin-top:10px"></div></div><div class="card"><h2>Rescue rate by area</h2><div id="i-zone" style="margin-top:10px"></div></div></div>
+      <div class="method" id="i-method"></div>
+    </section>
+
+    <!-- admin: lab -->
+    <section class="view" id="v-lab">
+      <div class="view-head"><div><h1>Simulation lab</h1><p>Same night, same food, same drivers: only the dispatch policy changes.</p></div></div>
+      <div class="sim-note"><span>⚗️</span><span>Simulated, not a real-world result. <b>Bengaluru</b> replays held-out nights from relay_data (episodes 255–299) with the real drivers and shelters; no model was trained on them.</span></div>
+      <div class="card"><div class="row wrap" style="gap:14px;align-items:flex-end">
+        <label class="field" style="min-width:230px"><span>Scenario</span><select class="input" id="scen"></select></label>
+        <label class="field" style="width:120px"><span>Night #</span><input class="input num" id="seed" type="number" value="0" min="0" max="999"></label>
+        <button class="btn" data-act="lab-demo"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M6 4l14 8-14 8z"/></svg>Replay one night</button>
+        <button class="btn ghost" data-act="lab-compare"><svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>Compare 30 nights</button></div></div>
+      <div id="lab-player" style="margin-top:16px"></div>
+      <div id="lab-table" style="margin-top:16px"></div>
+    </section>
+
+    <!-- admin: system -->
+    <section class="view" id="v-system">
+      <div class="view-head"><div><h1>System</h1><p>Is everything working? Health checks, the living-city simulation, people and every event as it happens.</p></div><span class="tiny mute" id="sys-up"></span></div>
+      <div class="health" id="health"></div>
+      <div class="grid-2" style="margin-top:18px">
+        <div class="stack">
+          <div class="card"><h2>Living city</h2><p class="small mute" style="margin-top:4px">Restaurants, drivers and shelters that aren't signed-in people are simulated from the relay_data behaviour. Signed-in people are never auto-driven.</p>
+            <div class="sim-ctl" style="margin-top:14px">
+              <label class="switch big"><input type="checkbox" id="sys-run" data-act="sys-run">Running</label>
+              <label class="field"><span>Speed of replies &amp; travel: <b id="sys-speed-v"></b></span><input type="range" id="sys-speed" min="1" max="60" step="1"></label>
+              <label class="field"><span>New donation every <b id="sys-every-v"></b></span><input type="range" id="sys-every" min="10" max="300" step="5"></label>
+              <button class="btn sm" data-act="sim-post">Post one now</button>
+            </div>
+            <div class="kpis" id="sys-sim" style="margin:16px 0 0"></div></div>
+          <div class="card"><h2>People</h2><div class="uhead"><span>Person</span><span>Role</span><span>Linked to</span><span></span></div><div id="users"></div></div>
+        </div>
+        <div class="card"><div class="row between"><h2>Activity</h2><span class="tiny mute">live</span></div><div class="events" id="events" style="margin-top:8px"></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="/static/app.js?v=__V__"></script>
+<script src="/static/explainer.js?v=__V__"></script>
+</body>
+</html>

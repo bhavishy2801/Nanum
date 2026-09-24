@@ -367,10 +367,14 @@ def fqi(X, lam):
     Sn = S[nxt[has]]
     cand = Z[[f"cand_{k}" for k in planner.RL_K]].to_numpy()[nxt[has]]
     y, hist = r.copy(), []
+    show = _showcase(X)   # held-out situations whose Q-values we record every iteration (for the admin explainer)
+    trace = [[] for _ in show]
     m = None
     for it in range(FQI_ITERS):
         m = HistGradientBoostingRegressor(max_iter=200, learning_rate=0.08, max_leaf_nodes=31, min_samples_leaf=40,
                                           l2_regularization=1.0, random_state=0).fit(XA, y)
+        for tr_, (_, row) in zip(trace, show):
+            tr_.append(_q_row(m, row))
         q = np.full(cand.shape, -np.inf)
         for j, k in enumerate(planner.RL_K):
             ok = ~np.isnan(cand[:, j])
@@ -385,6 +389,13 @@ def fqi(X, lam):
     import joblib
     name = f"fqi_lam{lam}.joblib"
     joblib.dump(m, os.path.join(MODELS, name))
+    for tr_, (_, row) in zip(trace, show):
+        tr_.append(_q_row(m, row))   # the saved (final) model
+    _save(f"rl_trace_lam{lam}.json", {
+        "lambda": lam, "gamma": GAMMA, "iterations": FQI_ITERS, "k": list(planner.RL_K), "bellman": hist,
+        "rows": int(tr.sum()),
+        "states": [{"name": name_, "features": {f: float(row[f]) for f in planner.RL_FEATURES}, "q": tr_}
+                   for (name_, row), tr_ in zip(show, trace)]})
 
     T = X[X.episode_id.isin(list(TEST))]   # diagnostics on held-out states
     St = T[planner.RL_FEATURES].to_numpy()
@@ -403,6 +414,21 @@ def fqi(X, lam):
     print(f"FQI lam={lam}:", {k: (round(v, 3) if isinstance(v, float) else v) for k, v in rep.items()
                                 if k != "bellman_change_per_iter"}, "bellman", [round(h, 2) for h in hist[-3:]])
     return rep
+
+
+def _showcase(X):
+    """Three held-out decision situations that read well in the explainer."""
+    T = X[X.episode_id.isin(list(TEST))]
+    picks = [("Plenty of time, many drivers nearby", (T.slack > 90) & (T.n_pool >= 20) & (T.n_offered == 0)),
+             ("Running out of time", (T.slack < 25) & (T.slack > 5) & (T.n_pool >= 5)),
+             ("Few good drivers around", (T.n_pool.between(3, 8)) & (T.top1 < 0.15) & (T.slack > 30))]
+    return [(n, T[mask].iloc[0]) for n, mask in picks if mask.any()]
+
+
+def _q_row(m, row):
+    s = [row[f] for f in planner.RL_FEATURES]
+    return [float(m.predict([s + [k, row[f"cand_{k}"]]])[0]) if not np.isnan(row[f"cand_{k}"]) else None
+            for k in planner.RL_K]
 
 
 def rl(D):

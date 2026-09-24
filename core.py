@@ -109,6 +109,7 @@ class Donation:
     t_drop: float | None = None
     code: str | None = None
     end_reason: str | None = None
+    owner: str | None = None     # account that posted it (email), "sim" for the city simulation
 
 
 @dataclass
@@ -356,6 +357,9 @@ def apply(s, e):
         _withdraw(s, d.id)
         _free(s, d, d.loc if k == "Diverted" else None)
         d.status, d.end_reason = ("expired" if k == "Expired" else "diverted"), e.get("reason")
+    elif k == "AvailabilitySet":     # a driver goes online / offline
+        v = s.volunteers[e["v"]]
+        v.start, v.end = (0, INF) if e["on"] else (0, 0)
     elif k == "CapacityUpdated":
         r = s.recipients[e["r"]]
         r.cap.update(e.get("cap", {}))
