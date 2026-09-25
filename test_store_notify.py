@@ -32,10 +32,20 @@ def _roundtrip(backend_factory):
     assert set(d["sessions"]) == {"h1"}
     assert len(d["notes"]) == 1 and d["notes"][0]["read"] is True
     assert d["outbox"][0]["subject"] == "hi"
+    try:                                                                   # one server per database
+        store.Store(s.backend)
+        raise AssertionError("a second server was allowed to write to the same database")
+    except store.DatabaseInUse:
+        pass
+    s.close()                                                              # clean shutdown releases it
     s2 = store.Store(s.backend)                                            # restart: continues the sequence
     assert s2.seq == 2 and s2.notes["a@x.com"][0]["read"] is True
     s2.event({"type": "BackupSet", "t": 2, "loc": (1, 2)})
     assert s2.flush() and len(s2.backend.load()["events"]) == 3
+    s2.close()
+    # a crashed server's lock expires by itself
+    assert s2.backend.claim("crashed", -1) is None and s2.backend.claim("next", 45) is None
+    s2.backend.release("next")
 
 
 def test_sqlite_store():

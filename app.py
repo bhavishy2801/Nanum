@@ -62,7 +62,10 @@ if isinstance(CFG.get("p_model"), str):
     CFG["p_model"] = core.load_p_model(CFG["p_model"])
 EXPLAIN_MODEL = sim.POLICIES["Relay-RL"][1]["wave_model"]   # the Q-function the admin explainer shows
 
-STORE = storage_db.Store(storage_db.backend_from_env(env))   # SQLite file, or MongoDB when MONGODB_URI is set
+try:
+    STORE = storage_db.Store(storage_db.backend_from_env(env))   # SQLite file, or MongoDB when MONGODB_URI is set
+except storage_db.DatabaseInUse as ex:
+    raise SystemExit(f"\nCan't start: {ex}\n") from None
 MAILER = notify.Mailer(STORE, env)                             # SMTP_* in .env; without it emails are previews
 PUBLIC_URL = (env("RELAY_PUBLIC_URL", "") or env("RENDER_EXTERNAL_URL", "")      # links inside emails (Render sets the latter)
               or f"http://localhost:{env('PORT', '8000')}")
@@ -99,8 +102,15 @@ def boot():
     events, STORE.events = STORE.events, []   # replayed once; after that the log lives only in the database
     if events:
         BASE = events[0]["base"]
-        for e in events:
-            core.apply(S, e)
+        for i, e in enumerate(events):
+            try:
+                core.apply(S, e)
+            except Exception as ex:
+                STORE.close()   # let `python store.py reset-city` run straight away
+                raise SystemExit(f"\nThe saved city history is inconsistent at event #{i + 1} ({e.get('type')}: {type(ex).__name__} {ex})."
+                                 "\nThis happens when two Relay servers wrote to the same database at the same time."
+                                 "\nFix: stop every other Relay server using this database, then run:  python store.py reset-city"
+                                 "\n(keeps accounts, emails and notifications; drivers and shelters pick their role again)\n") from None
         RECENT.extend(e for e in events[-400:] if e["type"] not in QUIET)
         _recount_budgets(events)
         return
@@ -353,7 +363,7 @@ async def lifespan(_):
     task = asyncio.create_task(ticker())
     yield
     task.cancel()
-    STORE.flush()   # write everything still queued before the process exits
+    STORE.close()   # write everything still queued, then release the database for the next server
 
 
 app = FastAPI(title="Relay", lifespan=lifespan)

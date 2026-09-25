@@ -11,15 +11,21 @@ on the database, which matters for a cloud database 50-150 ms away.
     python store.py check      # connect, create indexes, write + read back a probe document
     python store.py migrate    # copy a local relay.db (SQLite) into MongoDB
     python store.py stats      # what is stored where
+    python store.py reset-city # start the city over; keeps accounts, emails and notifications
+
+One server per database: the running app holds a lock (renewed every 10 s, expires 45 s after a crash). A second server
+pointed at the same database refuses to start, because two writers would overwrite each other's event numbers.
 """
 import copy
 import json
 import os
 import queue
+import socket
 import sqlite3
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -93,6 +99,29 @@ class SQLiteBackend:
 
     def stats(self):
         return {t: self.db.execute(f"select count(*) from {t}").fetchone()[0] for t in ("events", "users", "sessions", "notes", "outbox")}
+
+    def claim(self, owner, ttl):
+        """Take or renew the one-writer lock. None if we hold it, else who does."""
+        now = time.time()
+        self.db.execute("create table if not exists writer (id integer primary key check (id = 1), owner text, host text, expires real)")
+        self.db.commit()
+        self.db.execute("begin immediate")
+        try:
+            r = self.db.execute("select owner, host, expires from writer where id = 1").fetchone()
+            if r and r[0] != owner and r[2] > now:
+                return {"host": r[1], "seconds_left": r[2] - now}
+            self.db.execute("insert or replace into writer values (1, ?, ?, ?)", (owner, socket.gethostname(), now + ttl))
+        finally:
+            self.db.commit()
+        return None
+
+    def release(self, owner):
+        with self.db:
+            self.db.execute("delete from writer where owner = ?", (owner,))
+
+    def reset_city(self):
+        with self.db:
+            self.db.execute("delete from events")
 
     def probe(self):
         """Write, read back and delete a throwaway row (for `python store.py check`)."""
@@ -181,6 +210,24 @@ class MongoBackend:
     def stats(self):
         return {c: self.db[c].count_documents({}) for c in ("events", "users", "sessions", "notes", "outbox")}
 
+    def claim(self, owner, ttl):
+        """Take or renew the one-writer lock. None if we hold it, else who does."""
+        from pymongo.errors import DuplicateKeyError
+        now = time.time()
+        try:   # matches only if we already hold it or it expired; otherwise the upsert collides on _id
+            self.db.writer.update_one({"_id": "writer", "$or": [{"owner": owner}, {"expires": {"$lt": now}}]},
+                                      {"$set": {"owner": owner, "host": socket.gethostname(), "expires": now + ttl}}, upsert=True)
+        except DuplicateKeyError:
+            d = self.db.writer.find_one({"_id": "writer"}) or {}
+            return {"host": d.get("host"), "seconds_left": d.get("expires", now) - now}
+        return None
+
+    def release(self, owner):
+        self.db.writer.delete_one({"_id": "writer", "owner": owner})
+
+    def reset_city(self):
+        self.db.events.delete_many({})
+
     def probe(self):
         """Write, read back and delete a throwaway document (for `python store.py check`)."""
         self.db.relay_probe.replace_one({"_id": "check"}, {"_id": "check", "t": time.time()}, upsert=True)
@@ -198,9 +245,22 @@ def backend_from_env(env=os.environ.get):
 
 # ---------------------------------------------------------------- store (in-memory + ordered write-behind)
 
+class DatabaseInUse(Exception):
+    pass
+
+
+LOCK_TTL, LOCK_RENEW = 45, 10
+
+
 class Store:
     def __init__(self, backend):
-        self.backend = backend
+        self.backend, self.owner = backend, uuid.uuid4().hex
+        holder = backend.claim(self.owner, LOCK_TTL)
+        if holder:
+            raise DatabaseInUse(f"another Relay server is already using this database ({backend.name}: {backend.where}; "
+                                f"running on {holder['host']}). Stop it first, or give this server its own database "
+                                f"(MONGODB_DB=relay_local in .env). If that server crashed, wait {max(1, int(holder['seconds_left']))} s and retry.")
+        self.closed, self.lost = False, False
         data = backend.load()
         self.events = data["events"]              # only used at boot for replay
         self.users = data["users"]
@@ -252,10 +312,33 @@ class Store:
         self.q.put(("wipe",))
         self.flush()
 
-    # -- the writer thread: batches, retries forever with backoff, never reorders or drops
+    # -- the writer thread: batches, retries forever with backoff, never reorders or drops; renews the lock
+    def _renew(self):
+        try:
+            if self.backend.claim(self.owner, LOCK_TTL):
+                self.lost = True   # someone took over after we stalled: stop writing rather than corrupt the log
+                with self.lock:
+                    self.error = "another Relay server took over this database; this one has stopped saving. Restart it."
+        except Exception as ex:   # network blip: try again next round
+            with self.lock:
+                self.error, self.error_at = f"{type(ex).__name__}: {ex}"[:300], time.time()
+
     def _writer(self):
+        renewed = time.time()
         while True:
-            batch = [self.q.get()]
+            if time.time() - renewed >= LOCK_RENEW:
+                self._renew()
+                renewed = time.time()
+            try:
+                batch = [self.q.get(timeout=LOCK_RENEW)]
+            except queue.Empty:
+                if self.closed:
+                    return
+                continue
+            if self.lost:
+                for _ in batch:
+                    self.q.task_done()
+                continue
             while len(batch) < 500:
                 try:
                     batch.append(self.q.get_nowait())
@@ -276,6 +359,13 @@ class Store:
                     delay = min(delay * 2, 30)
             for _ in batch:
                 self.q.task_done()
+
+    def close(self):
+        """Write everything still queued, then let another server take over."""
+        self.flush()
+        self.closed = True
+        if not self.lost:
+            self.backend.release(self.owner)
 
     def flush(self, timeout=15):
         end = time.time() + timeout
@@ -329,6 +419,24 @@ if __name__ == "__main__":
         for i in range(0, len(ops), 1000):
             dst.write(ops[i:i + 1000])
         print("migrated:", dst.stats())
+    elif cmd == "reset-city":
+        b = backend_from_env()
+        tmp = uuid.uuid4().hex
+        holder = b.claim(tmp, 60)
+        if holder:
+            sys.exit(f"a Relay server is running on {holder['host']}: stop it first (or wait {int(holder['seconds_left'])} s if it crashed)")
+        print(f"This clears the city history in {b.name} ({b.where}): donations, offers and simulated activity.")
+        print("It KEEPS accounts, emails and notifications. Drivers and shelters choose their role again at next sign-in.")
+        if input("type 'reset' to continue: ").strip() != "reset":
+            b.release(tmp)
+            sys.exit("cancelled")
+        users = b.load()["users"]
+        b.reset_city()
+        again = [("user", e, {**u, "role": None, "entity": None}) for e, u in users.items() if u.get("role") in ("volunteer", "shelter")]
+        if again:
+            b.write(again)
+        b.release(tmp)
+        print(f"done: city cleared, {len(again)} driver/shelter account(s) will choose their role again. Start the app.")
     elif cmd == "wipe":
         b = backend_from_env()
         if input(f"Delete ALL Relay data in {b.name} ({b.where})? type 'wipe' to confirm: ").strip() != "wipe":
