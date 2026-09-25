@@ -22,6 +22,10 @@ def _stage0(s, now, cfg, out):
     for o in s.offers.values():
         if o.status == "sent" and now >= o.expires:
             out.append(ev("OfferExpired", offer=o.id))
+    old = now - cfg.get("budget_window", INF)   # weekly budget is a rolling window
+    for v in s.volunteers.values():
+        if v.sent and v.sent[0] < old:
+            out.append(ev("OffersAged", v=v.id, before=old))
     gone = set()
     for d in s.donations.values():
         if d.status in OPEN and (now >= d.safe_until - cfg["eps"] or now > d.b):
@@ -80,7 +84,8 @@ def _stage1(s, now, cfg, out, gone, relay, repick):
                 out.append(ev("EscalationRaised", d=d.id, reason="no feasible recipient", L=None))
             continue
         if relay:
-            best = max(cands, key=lambda r: _score(d, r, t3, cfg))
+            prefer = cfg.get("real_r", ()) if _real(d) else ()   # a real shelter first, among the safe ones
+            best = max(cands, key=lambda r: _score(d, r, t3, cfg) + (1.0 if r.id in prefer else 0.0))
         else:
             best = min(cands, key=lambda r: travel(d.loc, r.loc, cfg))
         free[best.id][g] -= d.kg
@@ -89,6 +94,11 @@ def _stage1(s, now, cfg, out, gone, relay, repick):
         out.append(ev("RecipientChosen", d=d.id, r=best.id))
         chosen[d.id] = best
     return chosen
+
+
+def _real(d):
+    """Posted by a real account (not the living-city simulation)."""
+    return d.owner not in (None, "sim")
 
 
 def eligible(s, d, r, now, cfg):
@@ -201,12 +211,17 @@ def plan(s, now, cfg=CFG):
             out.append(ev("EscalationRaised", d=d.id, reason=reason, L=L, pmax=round(pmax, 3)))
         if O or not E:
             continue   # wait for the current wave to time out
-        for v in _wave(s, d, E, p, L, now, cfg):
+        wave = _wave(s, d, E, p, L, now, cfg)
+        people = [v for v in E if v.id in cfg.get("real_v", ())] if _real(d) else []
+        if people:   # signed-in drivers before simulated stand-ins; the policy still sets the size (at least 1)
+            wave = sorted(people, key=lambda v: p[v.id], reverse=True)[:max(1, len(wave))]
+        for v in wave:
             if v.n7 + sent.get(v.id, 0) >= cfg["K"]:
                 continue
             sent[v.id] = sent.get(v.id, 0) + 1
+            free = cfg.get("live") and not (_real(d) and v.id in cfg.get("real_v", ()))
             out.append(ev("OfferSent", id=f"{d.id}:{v.id}", d=d.id, v=v.id,
-                          expires=now + cfg["wave_timeout"], p=round(p[v.id], 4)))
+                          expires=now + cfg["wave_timeout"], p=round(p[v.id], 4), **({"free": True} if free else {})))
     return out
 
 

@@ -578,7 +578,7 @@
     $("#xp-full").textContent = on ? "✕ Exit presenter" : "⛶ Present";
   });
   document.addEventListener("keydown", e => {   // presenter keys, only while this tab is open and not typing
-    if (!$("#v-thinks")?.classList.contains("on") || e.target.closest("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!$("#v-thinks")?.classList.contains("on") || e.target.closest?.("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); X.playing = false; goto(X.i + 1); }
     else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); X.playing = false; goto(X.i - 1); }
     else if (e.key === " ") { e.preventDefault(); $("#xp-play").click(); }

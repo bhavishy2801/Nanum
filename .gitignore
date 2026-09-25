@@ -9,3 +9,5 @@ relay_data/*
 !relay_data/offers.csv
 !relay_data/volunteers.csv
 !relay_data/recipients.csv
+# organiser document marked "not for public distribution"
+AmiHacks_Problem_Statement-1.pdf

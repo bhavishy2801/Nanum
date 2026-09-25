@@ -95,6 +95,31 @@ def test_intake():
     assert intake.regex_parse("some food, up to 5 kg")["ready_until"] is None
 
 
+def test_real_people_before_simulated_stand_ins():
+    """A real donor's food goes to a real signed-in driver and shelter first, even when simulated ones rank higher.
+    Simulated donations are planned as before, so a real driver isn't offered every simulated post."""
+    s, INF = core.State(), core.INF
+    for rid, loc in (("R001", (12.93, 77.62)), ("S001", (12.95, 77.60))):   # R = simulated, S = registered by a person
+        core.apply(s, {"type": "RecipientAdded", "t": 0, "r": dict(id=rid, name=rid, loc=loc, alpha=0, beta=INF, mu=0,
+                                                                  cap={"hot": 100, "cold": 100, "ambient": 100})})
+    for i in range(6):   # simulated drivers right next to the donor, the real one a bit further away
+        core.apply(s, {"type": "VolunteerAdded", "t": 0, "v": dict(id=f"V{i}", name=f"V{i}", loc=(12.935, 77.625 + i * 1e-4), cap_kg=30)})
+    core.apply(s, {"type": "VolunteerAdded", "t": 0, "v": dict(id="U0001", name="Real", loc=(12.96, 77.64), cap_kg=30)})
+    cfg = {**core.CFG, "real_v": {"U0001"}, "real_r": {"S001"}}
+    for did, owner in (("d1", "cook@x.com"), ("d2", "sim")):
+        core.apply(s, {"type": "DonationPosted", "t": 600, "d": dict(id=did, donor="K", loc=(12.935, 77.625), category="cooked",
+                                                                    holding="hot", veg=True, kg=10, meals=18, a=600, b=720,
+                                                                    safe_until=840, posted=600, owner=owner)})
+    plain = [e for e in planner.plan(copy.deepcopy(s), 600, core.CFG) if e.get("d") == "d2"]   # without any real people
+    for e in planner.plan(s, 600, cfg):
+        e.setdefault("t", 600)
+        core.apply(s, e)
+    to = lambda did: {o.v for o in s.offers.values() if o.d == did}
+    assert to("d1") == {"U0001"}, to("d1")                      # the real driver, not the nearer simulated ones
+    assert s.donations["d1"].recipient == "S001"               # the real shelter (it passes the safety rules)
+    assert to("d2") == {e["v"] for e in plain if e["type"] == "OfferSent"}   # simulated food: planned exactly as before
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -12,7 +12,7 @@ INF = 1e9
 
 # Appendix B planner defaults (tune in simulation) + a few physical constants [ASM].
 CFG = dict(
-    tau_star=0.95, tau_min=0.80, wave_timeout=8, k_max=6, K=10, gamma=0.15,
+    tau_star=0.95, tau_min=0.80, wave_timeout=8, k_max=6, K=10, gamma=0.15, budget_window=7 * 1440,
     eps=20, eps_esc=10, alert_lead=10, rho_B=20,
     lam_F=0.5, lam_T=0.02, lam_S=0.05, S_min=60,
     rho_v=5,            # expected volunteer response delay (min)
@@ -138,12 +138,13 @@ class Volunteer:
     cap_kg: float
     start: float = 0
     end: float = INF
-    n7: int = 0              # offers in last 7 days (fatigue + budget K)
+    n7: int = 0              # offers in the last 7 days (fatigue + budget K) = len(sent)
     acc: int = 0             # accepted offers (history, for Beta shrinkage)
     off: int = 0             # resolved offers (history)
     busy: str | None = None
     zone: str = "downtown"
     home: tuple | None = None   # if set, the volunteer goes home after each delivery (data world)
+    sent: list = field(default_factory=list)   # times of the offers counted in n7 (rolling window)
 
 
 @dataclass
@@ -302,6 +303,7 @@ def apply(s, e):
         v = Volunteer(**copy.deepcopy(e["v"]))
         v.loc = tuple(v.loc)
         v.home = tuple(v.home) if v.home else None
+        v.sent = [t] * v.n7   # prior history counts from the moment the volunteer joins
         s.volunteers[v.id] = v
     elif k == "DonationPosted":
         d = Donation(**copy.deepcopy(e["d"]))
@@ -315,7 +317,10 @@ def apply(s, e):
         d.recipient = r.id
     elif k == "OfferSent":
         s.offers[e["id"]] = Offer(e["id"], e["d"], e["v"], t, e["expires"], e.get("p"))
-        s.volunteers[e["v"]].n7 += 1
+        if not e.get("free"):   # free = the living city's stand-ins or simulated food: no one's weekly budget
+            v = s.volunteers[e["v"]]
+            v.sent.append(t)
+            v.n7 = len(v.sent)
         if d.status == "posted":
             d.status = "offered"
     elif k in ("OfferExpired", "OfferDeclined"):
@@ -360,6 +365,15 @@ def apply(s, e):
     elif k == "AvailabilitySet":     # a driver goes online / offline
         v = s.volunteers[e["v"]]
         v.start, v.end = (0, INF) if e["on"] else (0, 0)
+    elif k == "OffersAged":            # offers older than the budget window stop counting
+        v = s.volunteers[e["v"]]
+        v.sent = [x for x in v.sent if x >= e["before"]]
+        v.n7 = len(v.sent)
+    elif k == "BudgetRecount":         # one-off correction of weekly counts (older logs counted every offer)
+        for vid, times in e["sent"].items():
+            v = s.volunteers[vid]
+            v.sent = list(times)
+            v.n7 = len(v.sent)
     elif k == "CapacityUpdated":
         r = s.recipients[e["r"]]
         r.cap.update(e.get("cap", {}))

@@ -69,6 +69,7 @@ PUBLIC_URL = (env("RELAY_PUBLIC_URL", "") or env("RENDER_EXTERNAL_URL", "")     
 CAT = {"cooked": "Cooked food", "dairy": "Dairy", "bakery": "Bakery", "produce": "Fruit & veg", "packaged": "Packaged food",
        "mixed": "Mixed food", "unknown": "Food"}
 RECENT = deque(maxlen=120)   # latest events, for the admin activity stream
+QUIET = ("OfferExpired", "OffersAged", "BudgetRecount")   # bookkeeping, not shown in the activity stream
 S = core.State()
 BASE = 0.0          # epoch seconds of day-0 midnight; live times are minutes since then
 WORLD = None        # the relay_data world: real volunteers' behaviour for the living-city simulation
@@ -83,7 +84,7 @@ def emit(e):
     e.setdefault("t", now())
     core.apply(S, e)     # raises on a bad event, so nothing invalid reaches the log
     STORE.event(e)
-    if e["type"] != "OfferExpired":
+    if e["type"] not in QUIET:
         RECENT.append(e)
     try:
         NOTIFY.on_event(e)
@@ -100,7 +101,8 @@ def boot():
         BASE = events[0]["base"]
         for e in events:
             core.apply(S, e)
-        RECENT.extend(e for e in events[-400:] if e["type"] != "OfferExpired")
+        RECENT.extend(e for e in events[-400:] if e["type"] not in QUIET)
+        _recount_budgets(events)
         return
     lt = time.localtime()
     BASE = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
@@ -111,10 +113,43 @@ def boot():
         emit(dict(e))
 
 
+def _recount_budgets(events):
+    """Weekly offer counts: only real food offered to a real person counts (older logs counted every offer, which
+    locked the whole city out once the simulation had sent 10 offers to everyone). Emits one correction if needed."""
+    real, t, since = user_entities(), now(), now() - CFG["budget_window"]
+    joined = {e["v"]["id"]: (e["t"], e["v"].get("n7", 0)) for e in events if e["type"] == "VolunteerAdded"}
+    want = {}
+    for v in S.volunteers.values():
+        t0, n = joined.get(v.id, (0.0, 0))
+        times = [t0] * n + sorted(o.t for o in S.offers.values() if o.v == v.id and v.id in real
+                                  and S.donations[o.d].owner not in (None, "sim"))
+        times = [x for x in times if x >= since]
+        if times != v.sent:
+            want[v.id] = times
+    if want:
+        emit({"type": "BudgetRecount", "sent": want, "t": t})
+
+
+def _refresh_shelters():
+    """Simulated shelters serve what they receive, so their space frees up again: reset each one to its normal
+    capacity minus food still held for it. Real shelters manage their own space."""
+    seed = {e["r"]["id"]: e["r"]["cap"] for e in WORLD.setup if e["type"] == "RecipientAdded"}
+    real, held = user_entities(), {}
+    for rid, g, kg in S.holds.values():
+        held[(rid, g)] = held.get((rid, g), 0) + kg
+    for r in S.recipients.values():
+        if r.id in seed and r.id not in real:
+            cap = {g: max(0.0, c - held.get((r.id, g), 0)) for g, c in seed[r.id].items()}
+            if any(abs(cap[g] - r.cap.get(g, 0)) > 0.5 for g in cap):
+                emit({"type": "CapacityUpdated", "r": r.id, "cap": cap, "by": "sim"})
+
+
 async def changed():
     """Re-plan on every change, on the 60 s tick and after simulated actions. Pages poll for updates."""
     t0 = time.perf_counter()
-    for e in PLAN(S, now(), CFG):
+    real = user_entities()   # signed-in people come before the simulated city's stand-ins
+    cfg = {**CFG, "real_v": real & S.volunteers.keys(), "real_r": real & S.recipients.keys(), "live": True}
+    for e in PLAN(S, now(), cfg):
         emit(e)
     STATS["plan_ms"].append((time.perf_counter() - t0) * 1000)
     STATS["last_plan"] = time.time()
@@ -221,7 +256,7 @@ def _finish_delivery(d, t, by=None):
 
 # ---------------------------------------------------------------- the living city (everyone who isn't signed in)
 
-SIM = {"running": env("RELAY_SIM", "1") == "1", "speed": 10.0, "every": 45.0, "next_post": 0.0}
+SIM = {"running": env("RELAY_SIM", "1") == "1", "speed": 10.0, "every": 45.0, "next_post": 0.0, "next_refresh": 0.0}
 SIM_COUNT = Counter()
 _rng = random.Random()
 _decided, _due, _scheduled = set(), {}, set()
@@ -245,6 +280,9 @@ def _sim_step():
     deliver. Signed-in people's drivers/shelters are never auto-driven. Travel and replies run SIM['speed']x faster."""
     wall, t, sp, acted = time.time(), now(), SIM["speed"], False
     real = user_entities()
+    if wall >= SIM["next_refresh"]:   # simulated shelters serve their food: space frees up hourly
+        SIM["next_refresh"] = wall + 3600
+        _refresh_shelters()
     if wall >= SIM["next_post"]:
         if SIM["next_post"]:
             _sim_post(t)
